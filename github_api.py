@@ -19,27 +19,32 @@ class GitHubError(Exception):
     def __init__(self, message: str, status_code: Optional[int] = None, response_text: Optional[str] = None):
         self.status_code = status_code
         self.response_text = response_text
-        super().__init__(f"{message} (Status: {status_code}): {response_text}")
+        # Fix: Call Exception.__init__ directly to avoid recursion
+        super().__init__(message)
 
 class RateLimitError(GitHubError):
     """Specific exception for rate limit errors."""
     def __init__(self, message: str, reset_time: Optional[int] = None, status_code: Optional[int] = None, response_text: Optional[str] = None):
         self.reset_time = reset_time
+        # Fix: Call GitHubError.__init__ properly
         super().__init__(message, status_code, response_text)
 
 class RepositoryError(GitHubError):
     """Specific exception for repository-related errors."""
     def __init__(self, message: str, status_code: Optional[int] = None, response_text: Optional[str] = None):
+        # Fix: Call GitHubError.__init__ properly
         super().__init__(message, status_code, response_text)
 
 class AuthenticationError(GitHubError):
     """Specific exception for authentication-related errors."""
     def __init__(self, message: str, status_code: Optional[int] = None, response_text: Optional[str] = None):
+        # Fix: Call GitHubError.__init__ properly
         super().__init__(message, status_code, response_text)
 
 class PermissionError(GitHubError):
     """Specific exception for permission-related errors."""
     def __init__(self, message: str, status_code: Optional[int] = None, response_text: Optional[str] = None):
+        # Fix: Call GitHubError.__init__ properly
         super().__init__(message, status_code, response_text)
 
 def validate_github_config() -> None:

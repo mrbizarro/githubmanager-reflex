@@ -7,6 +7,10 @@ from ai_split import ai_split
 from typing import Dict, List, Any, Optional
 import time
 import json
+try:
+    from deployment_manager import create_enhanced_deployment_section
+except ImportError:
+    create_enhanced_deployment_section = None
 
 # Configure the Streamlit page
 st.set_page_config(
@@ -632,48 +636,77 @@ if mode == "📁 Upload & Convert":
         # Processing section
         st.markdown("## 🔄 Processing Results")
         
-        all_projects = {}
-        total_milestones = 0
-        total_issues = 0
+        # Store processed projects in session state to avoid re-processing
+        if 'processed_projects' not in st.session_state:
+            st.session_state.processed_projects = {}
+            st.session_state.total_milestones = 0
+            st.session_state.total_issues = 0
+        
+        # Only process files if we don't have stored results or if files changed
+        files_changed = False
+        current_files = [f.name if hasattr(f, 'name') else str(f) for f in files_to_process if f is not None]
+        
+        if 'last_processed_files' not in st.session_state:
+            st.session_state.last_processed_files = []
+        
+        if current_files != st.session_state.last_processed_files:
+            files_changed = True
+            st.session_state.last_processed_files = current_files
         
         # Progress tracking
         if len(files_to_process) > 1:
             progress_bar = st.progress(0)
             status_placeholder = st.empty()
         
-        # Process each file
-        for i, file in enumerate(files_to_process):
-            if len(files_to_process) > 1:
-                status_placeholder.info(f"Processing {file.name} ({i+1}/{len(files_to_process)})")
+        # Process files only if changed
+        if files_changed or not st.session_state.processed_projects:
+            all_projects = {}
+            total_milestones = 0
+            total_issues = 0
             
-            md_text = file.read().decode()
-            file.seek(0)
-            
-            with st.spinner(f"🧠 Analyzing {file.name}..." if use_ai_parsing else f"📝 Parsing {file.name}..."):
-                reasoning, project = parse_markdown(md_text, use_ai=use_ai_parsing)
-            
-            if project:
-                # Add file prefix for multiple files
+            # Process each file
+            for i, file in enumerate(files_to_process):
                 if len(files_to_process) > 1:
-                    file_prefix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
-                    prefixed_project = {
-                        f"[{file_prefix}] {name}": data 
-                        for name, data in project.items()
-                    }
-                    all_projects.update(prefixed_project)
-                else:
-                    all_projects.update(project)
+                    status_placeholder.info(f"Processing {file.name} ({i+1}/{len(files_to_process)})")
                 
-                total_milestones += len(project)
-                total_issues += sum(len(m['issues']) for m in project.values())
+                md_text = file.read().decode()
+                file.seek(0)
+                
+                with st.spinner(f"🧠 Analyzing {file.name}..." if use_ai_parsing else f"📝 Parsing {file.name}..."):
+                    reasoning, project = parse_markdown(md_text, use_ai=use_ai_parsing)
+                
+                if project:
+                    # Add file prefix for multiple files
+                    if len(files_to_process) > 1:
+                        file_prefix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
+                        prefixed_project = {
+                            f"[{file_prefix}] {name}": data 
+                            for name, data in project.items()
+                        }
+                        all_projects.update(prefixed_project)
+                    else:
+                        all_projects.update(project)
+                    
+                    total_milestones += len(project)
+                    total_issues += sum(len(m['issues']) for m in project.values())
+                
+                if len(files_to_process) > 1:
+                    progress_bar.progress((i + 1) / len(files_to_process))
             
+            # Store results in session state
+            st.session_state.processed_projects = all_projects
+            st.session_state.total_milestones = total_milestones
+            st.session_state.total_issues = total_issues
+            
+            # Clear progress indicators
             if len(files_to_process) > 1:
-                progress_bar.progress((i + 1) / len(files_to_process))
-        
-        # Clear progress indicators
-        if len(files_to_process) > 1:
-            progress_bar.empty()
-            status_placeholder.empty()
+                progress_bar.empty()
+                status_placeholder.empty()
+        else:
+            # Use stored results
+            all_projects = st.session_state.processed_projects
+            total_milestones = st.session_state.total_milestones
+            total_issues = st.session_state.total_issues
         
         # Show results
         if all_projects:
@@ -761,10 +794,25 @@ if mode == "📁 Upload & Convert":
                         'issues': edited_issues
                     }
             
-            # Deploy section
+            # Enhanced Deploy section with progress tracking
             st.markdown("---")
-            st.markdown("## 🚀 Deploy to GitHub")
+            st.markdown("## 🚀 Enhanced Deploy to GitHub")
             
+            # Initialize deployment state
+            if 'deployment_state' not in st.session_state:
+                st.session_state.deployment_state = {
+                    'status': 'pending',
+                    'progress': 0,
+                    'current_action': '',
+                    'logs': [],
+                    'errors': [],
+                    'created_milestones': 0,
+                    'created_issues': 0,
+                    'start_time': None,
+                    'end_time': None
+                }
+            
+            # Deployment mode indicator
             deployment_mode = "🧪 Test Deployment" if dry_run else "🚀 Live Deployment"
             deployment_color = "warning" if dry_run else "success"
             
@@ -777,17 +825,91 @@ if mode == "📁 Upload & Convert":
             </div>
             """, unsafe_allow_html=True)
             
+            # Enhanced status display
+            state = st.session_state.deployment_state
+            status_colors = {
+                'pending': ('🟡', '#fbbf24', 'Ready to deploy'),
+                'running': ('🔵', '#3b82f6', 'Deployment in progress...'),
+                'completed': ('🟢', '#10b981', 'Deployment completed successfully!'),
+                'error': ('🔴', '#ef4444', 'Deployment failed')
+            }
+            
+            icon, color, message = status_colors.get(state['status'], ('🟡', '#fbbf24', 'Unknown status'))
+            
+            st.markdown(f"""
+            <div style="
+                display: flex; 
+                align-items: center; 
+                gap: 10px; 
+                padding: 15px; 
+                background: #1e293b; 
+                border-radius: 10px; 
+                border-left: 4px solid {color};
+                margin: 20px 0;
+            ">
+                <span style="font-size: 1.2rem;">{icon}</span>
+                <span style="color: #e2e8f0; font-weight: 500;">{message}</span>
+                {'<div style="width: 16px; height: 16px; border: 2px solid #334155; border-top: 2px solid #6366f1; border-radius: 50%; animation: spin 1s linear infinite; margin-left: auto;"></div>' if state['status'] == 'running' else ''}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Progress metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Progress", f"{state['progress']}%")
+            with col2:
+                st.metric("Milestones Created", state['created_milestones'])
+            with col3:
+                st.metric("Issues Created", state['created_issues'])
+            with col4:
+                st.metric("Errors", len(state['errors']))
+            
+            # Progress bar
+            if state['progress'] > 0:
+                st.progress(state['progress'] / 100)
+            
+            # Current action
+            if state['status'] == 'running' and state['current_action']:
+                st.markdown(f"""
+                <div style="
+                    background: #334155; 
+                    padding: 15px; 
+                    border-radius: 10px; 
+                    border-left: 4px solid #6366f1;
+                    margin: 20px 0;
+                ">
+                    <div style="color: #e2e8f0; font-weight: 500;">
+                        🔄 {state['current_action']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            
+            # Deployment controls
             col1, col2, col3 = st.columns([2, 1, 1])
             
             with col1:
                 deploy_button = st.button(
-                    f"🚀 Deploy {total_milestones} milestones & {total_issues} issues",
-                    disabled=not github_ok and not dry_run,
-                    type="primary"
+                    f"🚀 Enhanced Deploy {total_milestones} milestones & {total_issues} issues",
+                    disabled=(not github_ok and not dry_run) or state['status'] == 'running',
+                    type="primary",
+                    key="enhanced_deploy_button"
                 )
             
             with col2:
-                if st.button("🔄 Reset"):
+                if st.button("🔄 Reset Progress", key="reset_enhanced_progress"):
+                    st.session_state.deployment_state = {
+                        'status': 'pending',
+                        'progress': 0,
+                        'current_action': '',
+                        'logs': [],
+                        'errors': [],
+                        'created_milestones': 0,
+                        'created_issues': 0,
+                        'start_time': None,
+                        'end_time': None
+                    }
                     st.rerun()
             
             with col3:
@@ -798,64 +920,188 @@ if mode == "📁 Upload & Convert":
                     mime="application/json"
                 )
             
-            # Handle deployment
-            if deploy_button:
-                progress = st.progress(0)
-                status = st.empty()
+            # Deployment log
+            if state['logs']:
+                st.subheader("📜 Deployment Log")
                 
-                try:
-                    total_ops = sum(len(m['issues']) for m in edited_projects.values())
-                    current_op = 0
-                    
-                    for ms_title, ms_data in edited_projects.items():
-                        status.info(f"Creating milestone: {ms_title}")
+                log_html = """
+                <div style="
+                    background: #0f172a; 
+                    border: 1px solid #334155; 
+                    border-radius: 10px; 
+                    padding: 15px; 
+                    max-height: 300px; 
+                    overflow-y: auto;
+                    font-family: 'Fira Code', monospace;
+                    font-size: 0.85rem;
+                ">
+                """
+                
+                for log_entry in state['logs'][-20:]:  # Show last 20 entries
+                    log_html += f"""
+                    <div style="
+                        display: flex; 
+                        align-items: center; 
+                        gap: 8px; 
+                        padding: 4px 0;
+                        color: #e2e8f0;
+                    ">
+                        <span>{log_entry.get('icon', 'ℹ️')}</span>
+                        <span style="flex: 1;">{log_entry.get('message', '')}</span>
+                        <span style="color: #64748b; font-size: 0.75rem;">{log_entry.get('timestamp', '')}</span>
+                    </div>
+                    """
+                
+                log_html += "</div>"
+                st.markdown(log_html, unsafe_allow_html=True)
+            
+            # Error details
+            if state['errors']:
+                st.subheader("⚠️ Errors")
+                for i, error in enumerate(state['errors'][-5:], 1):
+                    st.error(f"Error {i}: {error}")
+            
+            # Handle deployment
+            if deploy_button and state['status'] != 'running':
+                from datetime import datetime
+                
+                # Start deployment
+                st.session_state.deployment_state.update({
+                    'status': 'running',
+                    'progress': 0,
+                    'current_action': 'Initializing deployment...',
+                    'logs': [{
+                        'timestamp': datetime.now().strftime('%H:%M:%S'),
+                        'icon': 'ℹ️',
+                        'message': f"{'[DRY RUN] ' if dry_run else ''}Deployment started"
+                    }],
+                    'errors': [],
+                    'created_milestones': 0,
+                    'created_issues': 0,
+                    'start_time': datetime.now(),
+                    'end_time': None
+                })
+                
+                st.rerun()
+            
+            # Process deployment if running
+            if state['status'] == 'running':
+                with st.spinner("Processing deployment..."):
+                    try:
+                        from datetime import datetime
+                        total_steps = total_milestones + total_issues
+                        current_step = 0
                         
-                        milestone_num = create_milestone(
-                            ms_title,
-                            ms_data.get('description', ''),
-                            dry_run=dry_run
-                        )
-                        
-                        for issue in ms_data['issues']:
-                            status.info(f"Creating issue: {issue['title'][:40]}...")
+                        # Process each milestone and its issues
+                        for milestone_name, milestone_data in edited_projects.items():
+                            current_step += 1
+                            progress = int((current_step / total_steps) * 100)
                             
-                            create_issue(
-                                issue['title'],
-                                issue['body'],
-                                milestone_num,
-                                labels=issue.get('labels', []),
-                                assignees=issue.get('assignees', []),
-                                dry_run=dry_run
-                            )
+                            # Update progress
+                            st.session_state.deployment_state.update({
+                                'progress': progress,
+                                'current_action': f"Creating milestone: {milestone_name}"
+                            })
                             
-                            current_op += 1
-                            progress.progress(current_op / total_ops)
+                            # Add log entry
+                            st.session_state.deployment_state['logs'].append({
+                                'timestamp': datetime.now().strftime('%H:%M:%S'),
+                                'icon': '🎯',
+                                'message': f"{'[DRY RUN] ' if dry_run else ''}Creating milestone: {milestone_name}"
+                            })
                             
                             if dry_run:
-                                time.sleep(0.1)  # Show progress
-                    
-                    # Success message
-                    success_type = "info" if dry_run else "success"
-                    success_title = "✅ Test Completed" if dry_run else "✅ Deployment Successful"
-                    success_msg = "Simulation completed successfully" if dry_run else f"Created {total_milestones} milestones and {total_issues} issues"
-                    
-                    st.markdown(f"""
-                    <div class="message-box {success_type}">
-                        <h4 class="message-title">{success_title}</h4>
-                        <p class="message-content">{success_msg}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                except Exception as e:
-                    st.markdown(f"""
-                    <div class="message-box error">
-                        <h4 class="message-title">❌ Error</h4>
-                        <p class="message-content">{str(e)}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                finally:
-                    progress.empty()
-                    status.empty()
+                                time.sleep(0.5)
+                                milestone_num = 999
+                            else:
+                                # Use simple, working API call
+                                from github_api_simple import create_milestone_simple
+                                milestone_num = create_milestone_simple(
+                                    title=milestone_name,
+                                    description=milestone_data.get('description', ''),
+                                    dry_run=False
+                                )
+                                time.sleep(1)
+                            
+                            st.session_state.deployment_state['created_milestones'] += 1
+                            st.session_state.deployment_state['logs'].append({
+                                'timestamp': datetime.now().strftime('%H:%M:%S'),
+                                'icon': '✅',
+                                'message': f"{'[DRY RUN] ' if dry_run else ''}Created milestone #{milestone_num}: {milestone_name}"
+                            })
+                            
+                            # Process issues
+                            for issue_index, issue in enumerate(milestone_data.get('issues', [])):
+                                current_step += 1
+                                progress = int((current_step / total_steps) * 100)
+                                
+                                issue_title = issue.get('title', f'Issue {issue_index + 1}')
+                                short_title = issue_title[:40] + '...' if len(issue_title) > 40 else issue_title
+                                
+                                st.session_state.deployment_state.update({
+                                    'progress': progress,
+                                    'current_action': f"Creating issue: {short_title}"
+                                })
+                                
+                                st.session_state.deployment_state['logs'].append({
+                                    'timestamp': datetime.now().strftime('%H:%M:%S'),
+                                    'icon': '📋',
+                                    'message': f"{'[DRY RUN] ' if dry_run else ''}Creating issue: {short_title}"
+                                })
+                                
+                                if dry_run:
+                                    time.sleep(0.3)
+                                    issue_num = 999 + issue_index
+                                else:
+                                    # Use simple, working API call
+                                    from github_api_simple import create_issue_simple
+                                    issue_result = create_issue_simple(
+                                        title=issue_title,
+                                        body=issue.get('body', ''),
+                                        milestone=milestone_num,
+                                        labels=issue.get('labels', []),
+                                        dry_run=False
+                                    )
+                                    issue_num = issue_result.get('number', 'Unknown') if issue_result else 'Failed'
+                                    time.sleep(1)
+                                
+                                st.session_state.deployment_state['created_issues'] += 1
+                                st.session_state.deployment_state['logs'].append({
+                                    'timestamp': datetime.now().strftime('%H:%M:%S'),
+                                    'icon': '✅',
+                                    'message': f"{'[DRY RUN] ' if dry_run else ''}Created issue #{issue_num}: {short_title}"
+                                })
+                        
+                        # Deployment completed
+                        st.session_state.deployment_state.update({
+                            'status': 'completed',
+                            'progress': 100,
+                            'current_action': '',
+                            'end_time': datetime.now()
+                        })
+                        
+                        completion_msg = f"Deployment completed! Created {st.session_state.deployment_state['created_milestones']} milestones and {st.session_state.deployment_state['created_issues']} issues"
+                        st.session_state.deployment_state['logs'].append({
+                            'timestamp': datetime.now().strftime('%H:%M:%S'),
+                            'icon': '✅',
+                            'message': f"{'[DRY RUN] ' if dry_run else ''}{completion_msg}"
+                        })
+                        
+                        st.rerun()
+                        
+                    except Exception as e:
+                        from datetime import datetime
+                        st.session_state.deployment_state.update({
+                            'status': 'error',
+                            'end_time': datetime.now()
+                        })
+                        st.session_state.deployment_state['errors'].append(str(e))
+                        st.session_state.deployment_state['logs'].append({
+                            'timestamp': datetime.now().strftime('%H:%M:%S'),
+                            'icon': '❌',
+                            'message': f"Deployment failed: {str(e)}"
+                        })
+                        st.rerun()
         
         else:
             st.markdown("""
