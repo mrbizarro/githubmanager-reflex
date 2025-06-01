@@ -10,20 +10,17 @@ TOKEN = os.getenv("GITHUB_TOKEN")
 OWNER = os.getenv("REPO_OWNER") 
 REPO = os.getenv("REPO_NAME")
 
-def create_milestone_simple(title: str, description: str = '', dry_run: bool = False) -> int:
+def create_milestone_simple(title: str, description: str = '') -> int:
     """
     Simple milestone creation following GitHub API docs exactly.
     
     Args:
         title: Milestone title
-        description: Milestone description  
-        dry_run: If True, simulate without making actual call
+        description: Milestone description
         
     Returns:
         Milestone number
     """
-    if dry_run:
-        return 999  # Fake number for dry run
     
     url = f"https://api.github.com/repos/{OWNER}/{REPO}/milestones"
     
@@ -55,7 +52,7 @@ def create_milestone_simple(title: str, description: str = '', dry_run: bool = F
         raise
 
 def create_issue_simple(title: str, body: str, milestone: Optional[int] = None, 
-                       labels: Optional[List[str]] = None, dry_run: bool = False) -> Optional[Dict[str, Any]]:
+                       labels: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
     """
     Simple issue creation following GitHub API docs exactly.
     
@@ -64,13 +61,10 @@ def create_issue_simple(title: str, body: str, milestone: Optional[int] = None,
         body: Issue body/description
         milestone: Milestone number (optional)
         labels: List of labels (optional)
-        dry_run: If True, simulate without making actual call
         
     Returns:
-        Issue data or None for dry run
+        Issue data
     """
-    if dry_run:
-        return {"number": 999}  # Fake data for dry run
     
     url = f"https://api.github.com/repos/{OWNER}/{REPO}/issues"
     
@@ -85,7 +79,7 @@ def create_issue_simple(title: str, body: str, milestone: Optional[int] = None,
         "body": body
     }
     
-    # Add optional fields only if provided
+    # Add optional fields
     if milestone is not None:
         data["milestone"] = milestone
     if labels:

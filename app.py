@@ -537,9 +537,8 @@ st.markdown(status_html, unsafe_allow_html=True)
 with st.sidebar:
     st.markdown('<h2 class="sidebar-title">⚙️ Configuration</h2>', unsafe_allow_html=True)
     
-    # Mode settings
-    st.subheader("🎯 Execution Mode")
-    dry_run = st.checkbox("🧪 Dry run mode", value=True, help="Test without making actual changes")
+    # Mode settings - Always live deployment
+    dry_run = False  # Always live deployment
     
     # AI settings
     st.subheader("🤖 AI Settings")
@@ -813,14 +812,12 @@ if mode == "📁 Upload & Convert":
                 }
             
             # Deployment mode indicator
-            deployment_mode = "🧪 Test Deployment" if dry_run else "🚀 Live Deployment"
-            deployment_color = "warning" if dry_run else "success"
-            
             st.markdown(f"""
-            <div class="message-box {deployment_color}">
-                <h4 class="message-title">{deployment_mode}</h4>
+            <div class="message-box success">
+                <h4 class="message-title">🚀 Live Deployment</h4>
                 <p class="message-content">
-                    {'No changes will be made to your repository' if dry_run else 'Changes will be applied to your repository'}
+                    Changes will be applied to your repository.<br>
+                    🏷️ All issues will be automatically tagged with descriptive project labels based on milestone names
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -892,7 +889,7 @@ if mode == "📁 Upload & Convert":
             with col1:
                 deploy_button = st.button(
                     f"🚀 Enhanced Deploy {total_milestones} milestones & {total_issues} issues",
-                    disabled=(not github_ok and not dry_run) or state['status'] == 'running',
+                    disabled=not github_ok or state['status'] == 'running',
                     type="primary",
                     key="enhanced_deploy_button"
                 )
@@ -973,7 +970,7 @@ if mode == "📁 Upload & Convert":
                     'logs': [{
                         'timestamp': datetime.now().strftime('%H:%M:%S'),
                         'icon': 'ℹ️',
-                        'message': f"{'[DRY RUN] ' if dry_run else ''}Deployment started"
+                        'message': 'Deployment started'
                     }],
                     'errors': [],
                     'created_milestones': 0,
@@ -1007,27 +1004,22 @@ if mode == "📁 Upload & Convert":
                             st.session_state.deployment_state['logs'].append({
                                 'timestamp': datetime.now().strftime('%H:%M:%S'),
                                 'icon': '🎯',
-                                'message': f"{'[DRY RUN] ' if dry_run else ''}Creating milestone: {milestone_name}"
+                                'message': f'Creating milestone: {milestone_name}'
                             })
                             
-                            if dry_run:
-                                time.sleep(0.5)
-                                milestone_num = 999
-                            else:
-                                # Use simple, working API call
-                                from github_api_simple import create_milestone_simple
-                                milestone_num = create_milestone_simple(
-                                    title=milestone_name,
-                                    description=milestone_data.get('description', ''),
-                                    dry_run=False
-                                )
-                                time.sleep(1)
+                            # Use simple, working API call
+                            from github_api_simple import create_milestone_simple
+                            milestone_num = create_milestone_simple(
+                                title=milestone_name,
+                                description=milestone_data.get('description', '')
+                            )
+                            time.sleep(1)
                             
                             st.session_state.deployment_state['created_milestones'] += 1
                             st.session_state.deployment_state['logs'].append({
                                 'timestamp': datetime.now().strftime('%H:%M:%S'),
                                 'icon': '✅',
-                                'message': f"{'[DRY RUN] ' if dry_run else ''}Created milestone #{milestone_num}: {milestone_name}"
+                                'message': f'Created milestone #{milestone_num}: {milestone_name}'
                             })
                             
                             # Process issues
@@ -1046,30 +1038,35 @@ if mode == "📁 Upload & Convert":
                                 st.session_state.deployment_state['logs'].append({
                                     'timestamp': datetime.now().strftime('%H:%M:%S'),
                                     'icon': '📋',
-                                    'message': f"{'[DRY RUN] ' if dry_run else ''}Creating issue: {short_title}"
+                                    'message': f'Creating issue: {short_title}'
                                 })
                                 
-                                if dry_run:
-                                    time.sleep(0.3)
-                                    issue_num = 999 + issue_index
-                                else:
-                                    # Use simple, working API call
-                                    from github_api_simple import create_issue_simple
-                                    issue_result = create_issue_simple(
-                                        title=issue_title,
-                                        body=issue.get('body', ''),
-                                        milestone=milestone_num,
-                                        labels=issue.get('labels', []),
-                                        dry_run=False
-                                    )
-                                    issue_num = issue_result.get('number', 'Unknown') if issue_result else 'Failed'
-                                    time.sleep(1)
+                                # Generate project tag from milestone name
+                                project_tag = milestone_name.lower().replace(' ', '-').replace('_', '-')
+                                project_tag = ''.join(c if c.isalnum() or c == '-' else '' for c in project_tag)
+                                project_tag = '-'.join(word for word in project_tag.split('-') if word)[:30]
+                                
+                                # Combine user labels with project tag
+                                all_labels = issue.get('labels', []).copy()
+                                if project_tag:
+                                    all_labels.append(project_tag)
+                                
+                                # Use simple, working API call
+                                from github_api_simple import create_issue_simple
+                                issue_result = create_issue_simple(
+                                    title=issue_title,
+                                    body=issue.get('body', ''),
+                                    milestone=milestone_num,
+                                    labels=all_labels
+                                )
+                                issue_num = issue_result.get('number', 'Unknown') if issue_result else 'Failed'
+                                time.sleep(1)
                                 
                                 st.session_state.deployment_state['created_issues'] += 1
                                 st.session_state.deployment_state['logs'].append({
                                     'timestamp': datetime.now().strftime('%H:%M:%S'),
                                     'icon': '✅',
-                                    'message': f"{'[DRY RUN] ' if dry_run else ''}Created issue #{issue_num}: {short_title}"
+                                    'message': f'Created issue #{issue_num}: {short_title}'
                                 })
                         
                         # Deployment completed
@@ -1084,7 +1081,7 @@ if mode == "📁 Upload & Convert":
                         st.session_state.deployment_state['logs'].append({
                             'timestamp': datetime.now().strftime('%H:%M:%S'),
                             'icon': '✅',
-                            'message': f"{'[DRY RUN] ' if dry_run else ''}{completion_msg}"
+                            'message': completion_msg
                         })
                         
                         st.rerun()
@@ -1213,7 +1210,7 @@ elif mode == "✍️ Manual Entry":
         with col1:
             deploy_manual_button = st.button(
                 f"🚀 Deploy {total_manual_milestones} milestones & {total_manual_issues} issues",
-                disabled=not github_ok and not dry_run,
+                disabled=not github_ok,
                 type="primary",
                 key="deploy_manual"
             )
@@ -1244,8 +1241,7 @@ elif mode == "✍️ Manual Entry":
                     
                     milestone_num = create_milestone(
                         ms_title,
-                        ms_data['description'],
-                        dry_run=dry_run
+                        ms_data['description']
                     )
                     
                     for issue in ms_data['issues']:
@@ -1256,22 +1252,17 @@ elif mode == "✍️ Manual Entry":
                             issue['body'],
                             milestone_num,
                             labels=issue['labels'],
-                            assignees=issue['assignees'],
-                            dry_run=dry_run
+                            assignees=issue['assignees']
                         )
                         
                         current_op += 1
                         progress.progress(current_op / total_ops)
                         
-                        if dry_run:
-                            time.sleep(0.1)
-                
-                success_type = "info" if dry_run else "success"
-                success_title = "✅ Test Completed" if dry_run else "✅ Deployment Successful"
+                        time.sleep(0.5)  # Brief pause between operations
                 
                 st.markdown(f"""
-                <div class="message-box {success_type}">
-                    <h4 class="message-title">{success_title}</h4>
+                <div class="message-box success">
+                    <h4 class="message-title">✅ Deployment Successful</h4>
                     <p class="message-content">Manual entries processed successfully</p>
                 </div>
                 """, unsafe_allow_html=True)
