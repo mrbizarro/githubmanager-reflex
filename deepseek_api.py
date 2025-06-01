@@ -147,7 +147,7 @@ def call_deepseek_api(
             f"{DEEPSEEK_BASE_URL}/chat/completions",
             headers=headers,
             json=payload,
-            timeout=60
+            timeout=120  # Increased timeout for better reliability
         )
         
         if response.status_code != 200:
