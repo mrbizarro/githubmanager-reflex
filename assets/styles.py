@@ -1,11 +1,11 @@
 """
-Modern CSS styling - COMPACT VERSION with no left menu
+Modern CSS styling with functional sidebar
 """
 
 import streamlit as st
 
 def load_custom_css():
-    """Load modern CSS styling with compact margins and no left menu"""
+    """Load modern CSS styling with beautiful sidebar"""
     
     # Check theme preference (default to dark)
     dark_mode = st.session_state.get('dark_mode', True)
@@ -71,18 +71,11 @@ def load_custom_css():
         --radius: 0.75rem;
     }}
     
-    /* COMPLETELY HIDE LEFT MENU AND SIDEBAR */
+    /* Hide Streamlit branding but keep sidebar */
     #MainMenu {{visibility: hidden;}}
     footer {{visibility: hidden;}}
     header {{visibility: hidden;}}
     .stDeployButton {{display: none;}}
-    
-    /* Hide all possible sidebar variations */
-    .css-1d391kg, .css-1r6slb0, .css-17lntkn, .css-1lcbmhc {{display: none !important;}}
-    section[data-testid="stSidebar"] {{display: none !important;}}
-    .stSidebar {{display: none !important;}}
-    div[data-testid="stSidebar"] {{display: none !important;}}
-    .sidebar {{display: none !important;}}
     
     /* App-wide theme */
     .stApp {{
@@ -90,7 +83,7 @@ def load_custom_css():
         color: {app_text_color} !important;
     }}
     
-    /* COMPACT MAIN CONTAINER WITH PROPER MARGINS */
+    /* Main container with normal sidebar layout */
     .main {{
         margin-left: 0 !important;
         width: 100% !important;
@@ -98,7 +91,7 @@ def load_custom_css():
     }}
     
     .main .block-container {{
-        padding: 1.5rem 4rem !important;
+        padding: 1.5rem 3rem !important;
         max-width: 1200px !important;
         margin: 0 auto !important;
         font-family: 'Inter', sans-serif !important;
@@ -107,18 +100,65 @@ def load_custom_css():
         width: 100% !important;
     }}
     
-    /* Ensure all elements follow theme */
-    .element-container, .stMarkdown, .stWidget {{
-        background-color: {app_bg_color} !important;
-        color: {app_text_color} !important;
+    /* Beautiful sidebar styling */
+    .css-1d391kg {{
+        background: linear-gradient(180deg, hsl(var(--card)) 0%, hsl(var(--muted)) 100%) !important;
+        padding: 1.5rem 1rem !important;
+        border-right: 1px solid hsl(var(--border)) !important;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1) !important;
+        min-height: 100vh !important;
+        width: 280px !important;
     }}
     
-    /* Modern header with gradient */
+    /* Sidebar content styling */
+    .css-1d391kg * {{
+        color: hsl(var(--foreground)) !important;
+    }}
+    
+    .css-1d391kg .stMarkdown {{
+        color: hsl(var(--foreground)) !important;
+    }}
+    
+    /* Sidebar section headers */
+    .sidebar-section {{
+        background: hsl(var(--accent));
+        padding: 0.75rem;
+        border-radius: var(--radius);
+        margin: 1rem 0;
+        border: 1px solid hsl(var(--border));
+    }}
+    
+    .sidebar-section h3 {{
+        margin: 0 !important;
+        font-size: 0.875rem !important;
+        font-weight: 600 !important;
+        color: hsl(var(--accent-foreground)) !important;
+    }}
+    
+    /* Sidebar buttons */
+    .css-1d391kg .stButton > button {{
+        width: 100% !important;
+        margin: 0.25rem 0 !important;
+        background: hsl(var(--secondary)) !important;
+        color: hsl(var(--secondary-foreground)) !important;
+        border: 1px solid hsl(var(--border)) !important;
+        font-size: 0.875rem !important;
+        padding: 0.5rem 1rem !important;
+        border-radius: var(--radius) !important;
+    }}
+    
+    .css-1d391kg .stButton > button:hover {{
+        background: hsl(var(--primary)) !important;
+        color: hsl(var(--primary-foreground)) !important;
+        border-color: hsl(var(--primary)) !important;
+    }}
+    
+    /* Modern header */
     .modern-header {{
         background: linear-gradient(135deg, hsl(var(--primary)) 0%, #8b5cf6 100%);
         padding: 2rem;
         border-radius: var(--radius);
-        margin: -1.5rem -4rem 2rem -4rem;
+        margin: -1.5rem -3rem 2rem -3rem;
         color: hsl(var(--primary-foreground));
         text-align: center;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
@@ -140,7 +180,7 @@ def load_custom_css():
         color: hsl(var(--primary-foreground));
     }}
     
-    /* Status indicators with better spacing */
+    /* Status indicators */
     .status-indicator {{
         display: flex;
         align-items: center;
@@ -152,10 +192,6 @@ def load_custom_css():
         background-color: hsl(var(--card));
         transition: all 0.2s ease;
         margin-bottom: 1rem;
-    }}
-    
-    .status-indicator:hover {{
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     }}
     
     .status-connected {{
@@ -179,14 +215,6 @@ def load_custom_css():
         margin: 1rem 0;
     }}
     
-    .modern-card:hover {{
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    }}
-    
-    .card-header {{
-        margin-bottom: 1rem;
-    }}
-    
     .card-title {{
         font-size: 1.25rem;
         font-weight: 600;
@@ -204,7 +232,7 @@ def load_custom_css():
         line-height: 1.5;
     }}
     
-    /* Modern tabs with better spacing */
+    /* Modern tabs */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 0.25rem;
         background-color: hsl(var(--muted));
@@ -212,7 +240,6 @@ def load_custom_css():
         border-radius: var(--radius);
         border: none;
         margin-bottom: 2rem;
-        justify-content: flex-start;
     }}
     
     .stTabs [data-baseweb="tab"] {{
@@ -258,7 +285,7 @@ def load_custom_css():
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     }}
     
-    /* Modern form elements */
+    /* Form elements */
     .stTextInput > div > div > input,
     .stTextArea > div > div > textarea,
     .stSelectbox > div > div > select {{
@@ -288,21 +315,6 @@ def load_custom_css():
         font-size: 0.875rem !important;
         margin-bottom: 0.5rem !important;
         font-family: 'Inter', sans-serif !important;
-    }}
-    
-    /* File uploader */
-    .stFileUploader {{
-        border: 2px dashed hsl(var(--border));
-        border-radius: var(--radius);
-        padding: 2rem;
-        text-align: center;
-        background-color: {form_bg_color} !important;
-        transition: all 0.2s ease;
-    }}
-    
-    .stFileUploader:hover {{
-        border-color: hsl(var(--primary));
-        background-color: hsl(var(--primary) / 0.05);
     }}
     
     /* Alerts */
@@ -353,7 +365,7 @@ def load_custom_css():
         opacity: 0.8;
     }}
     
-    /* Badge */
+    /* Badges */
     .modern-badge {{
         display: inline-flex;
         align-items: center;
@@ -372,23 +384,16 @@ def load_custom_css():
         border-color: hsl(var(--primary));
     }}
     
-    .badge-destructive {{
-        background-color: hsl(var(--destructive));
-        color: hsl(var(--destructive-foreground));
-        border-color: hsl(var(--destructive));
-    }}
-    
     .badge-success {{
         background-color: hsl(142 71% 45%);
         color: white;
         border-color: hsl(142 71% 45%);
     }}
     
-    /* Responsive design for compact layout */
+    /* Responsive design */
     @media (max-width: 1200px) {{
         .main .block-container {{
             padding: 1.5rem 2rem !important;
-            max-width: 100% !important;
         }}
         
         .modern-header {{
@@ -409,17 +414,10 @@ def load_custom_css():
         .modern-header h1 {{
             font-size: 2rem;
         }}
-    }}
-    
-    /* Hide toggle/expander arrows that might appear as left menu */
-    .stExpanderHeader {{
-        background-color: transparent !important;
-    }}
-    
-    /* Ensure no left padding that might look like a menu */
-    div[data-testid="block-container"] {{
-        padding-left: 4rem !important;
-        padding-right: 4rem !important;
+        
+        .css-1d391kg {{
+            width: 250px !important;
+        }}
     }}
     </style>
     """

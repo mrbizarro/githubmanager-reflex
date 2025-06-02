@@ -6,7 +6,7 @@ Clean, working version for developers
 import streamlit as st
 from assets.styles import load_custom_css
 from components.header import render_header
-from components.status import render_status_section
+from components.sidebar import render_sidebar, handle_sidebar_actions
 from components.navigation import render_navigation
 from config.settings import initialize_app_config, Config
 from utils.session import initialize_session_state
@@ -28,6 +28,12 @@ def main():
     
     # Load modern CSS
     load_custom_css()
+    
+    # Render sidebar
+    render_sidebar()
+    
+    # Handle sidebar actions
+    handle_sidebar_actions()
     
     # Main layout
     with st.container():
