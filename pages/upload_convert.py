@@ -490,47 +490,65 @@ def process_uploaded_files():
     # Update processing state
     update_processing_state(status='processing', progress=0, message='Starting file processing...')
     
+    # Force UI update
+    st.rerun()
+    
     try:
-        # Simulate processing with progress updates
+        # Process files immediately without delays
         all_projects = {}
         total_files = len(files)
         
         for i, file in enumerate(files):
             # Update progress
-            progress = int((i / total_files) * 100)
+            progress = int((i / total_files) * 50)  # First 50% for reading
             update_processing_state(
                 progress=progress, 
-                message=f"Processing {file.name}..."
+                message=f"Reading {file.name}..."
             )
             
             # Read file content
-            content = file.read().decode('utf-8')
-            file.seek(0)  # Reset file pointer
+            try:
+                content = file.read().decode('utf-8')
+                file.seek(0)  # Reset file pointer
+            except Exception as e:
+                st.error(f"Failed to read {file.name}: {str(e)}")
+                continue
+            
+            # Update progress for parsing
+            progress = int(50 + (i / total_files) * 50)  # Second 50% for parsing
+            update_processing_state(
+                progress=progress, 
+                message=f"Parsing {file.name}..."
+            )
             
             # Use AI or standard parsing
             ai_enabled = st.session_state.get('ai_enabled', True) and get_config('ai_connected', False)
             
-            if ai_enabled:
-                # Simulate AI parsing
-                parsed_project = simulate_ai_parsing(content, file.name)
-            else:
-                # Use standard parsing
-                parsed_project = simulate_standard_parsing(content, file.name)
-            
-            if parsed_project:
-                # Add file prefix for multiple files
-                if total_files > 1:
-                    file_prefix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
-                    prefixed_project = {
-                        f"[{file_prefix}] {name}": data 
-                        for name, data in parsed_project.items()
-                    }
-                    all_projects.update(prefixed_project)
+            try:
+                if ai_enabled:
+                    # Try AI parsing with timeout
+                    parsed_project = simulate_ai_parsing(content, file.name)
                 else:
-                    all_projects.update(parsed_project)
-            
-            # Small delay to show progress
-            time.sleep(0.5)
+                    # Use standard parsing
+                    parsed_project = simulate_standard_parsing(content, file.name)
+                
+                if parsed_project:
+                    # Add file prefix for multiple files
+                    if total_files > 1:
+                        file_prefix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
+                        prefixed_project = {
+                            f"[{file_prefix}] {name}": data 
+                            for name, data in parsed_project.items()
+                        }
+                        all_projects.update(prefixed_project)
+                    else:
+                        all_projects.update(parsed_project)
+                else:
+                    st.warning(f"No content extracted from {file.name}")
+                    
+            except Exception as e:
+                st.error(f"Failed to parse {file.name}: {str(e)}")
+                continue
         
         # Complete processing
         update_processing_state(
@@ -554,20 +572,32 @@ def process_uploaded_files():
         st.error(f"❌ Processing failed: {str(e)}")
 
 def simulate_ai_parsing(content, filename):
-    """Use real DeepSeek AI to parse markdown content"""
+    """Use real DeepSeek AI to parse markdown content with timeout"""
     
     try:
         # Import the real parsing function
+        import sys
+        import os
+        
+        # Add the main directory to path
+        main_dir = os.path.dirname(os.path.dirname(__file__))
+        if main_dir not in sys.path:
+            sys.path.insert(0, main_dir)
+        
         from deepseek_api import ai_parse_markdown
         
-        # Use real AI parsing
+        # Use real AI parsing with progress indication
+        update_processing_state(message=f"AI analyzing {filename}...")
         reasoning, structure = ai_parse_markdown(content)
         
         return structure
         
+    except ImportError as e:
+        st.warning(f"AI module not available: {str(e)}. Using standard parsing.")
+        return simulate_standard_parsing(content, filename)
     except Exception as e:
         # If AI fails, fall back to standard parsing
-        st.warning(f"AI parsing failed for {filename}, falling back to standard parsing: {str(e)}")
+        st.warning(f"AI parsing failed for {filename}: {str(e)}. Using standard parsing.")
         return simulate_standard_parsing(content, filename)
 
 def simulate_standard_parsing(content, filename):
@@ -577,17 +607,27 @@ def simulate_standard_parsing(content, filename):
         # Import the real parsing function
         import sys
         import os
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'cleanup_backup'))
+        
+        # Add the cleanup_backup directory to path
+        cleanup_dir = os.path.join(os.path.dirname(__file__), '..', 'cleanup_backup')
+        cleanup_dir = os.path.abspath(cleanup_dir)
+        
+        if cleanup_dir not in sys.path:
+            sys.path.insert(0, cleanup_dir)
         
         from parse_markdown import parse_markdown_regex
         
         # Use real regex parsing
+        update_processing_state(message=f"Standard parsing {filename}...")
         structure = parse_markdown_regex(content)
         
         return structure
         
+    except ImportError as e:
+        st.error(f"Standard parsing module not found: {str(e)}")
+        return {}
     except Exception as e:
-        st.error(f"Parsing failed for {filename}: {str(e)}")
+        st.error(f"Standard parsing failed for {filename}: {str(e)}")
         return {}
 
 def start_deployment():

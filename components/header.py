@@ -120,14 +120,11 @@ def update_project_config(owner, name):
     """Update project configuration in .env file"""
     
     try:
-        print(f"🔄 Attempting to update repository to {owner}/{name}")
-        
         # Read current .env content
         env_content = ""
         if os.path.exists('.env'):
             with open('.env', 'r') as f:
                 env_content = f.read()
-                print(f"📄 Current .env content length: {len(env_content)}")
         
         # Update or add repository settings
         lines = env_content.split('\n') if env_content else []
@@ -137,57 +134,35 @@ def update_project_config(owner, name):
         
         for line in lines:
             if line.startswith('REPO_OWNER='):
-                old_value = line
                 updated_lines.append(f'REPO_OWNER={owner}')
                 found_owner = True
-                print(f"📝 Updated: {old_value} → REPO_OWNER={owner}")
             elif line.startswith('REPO_NAME='):
-                old_value = line
                 updated_lines.append(f'REPO_NAME={name}')
                 found_name = True
-                print(f"📝 Updated: {old_value} → REPO_NAME={name}")
             else:
                 updated_lines.append(line)
         
         # Add missing settings if not found
         if not found_owner:
             updated_lines.append(f'REPO_OWNER={owner}')
-            print(f"➕ Added: REPO_OWNER={owner}")
         if not found_name:
             updated_lines.append(f'REPO_NAME={name}')
-            print(f"➕ Added: REPO_NAME={name}")
         
         # Write back to .env
         new_content = '\n'.join(updated_lines)
         with open('.env', 'w') as f:
             f.write(new_content)
         
-        print(f"💾 Wrote .env file with {len(new_content)} characters")
-        
         # Force environment reload
         os.environ['REPO_OWNER'] = owner
         os.environ['REPO_NAME'] = name
-        print(f"🔄 Updated environment variables: REPO_OWNER={owner}, REPO_NAME={name}")
         
         # Clear any session caching
         if 'project_config_cache' in st.session_state:
             del st.session_state.project_config_cache
         
-        # Verify the update worked
-        with open('.env', 'r') as f:
-            verify_content = f.read()
-            if f'REPO_OWNER={owner}' in verify_content and f'REPO_NAME={name}' in verify_content:
-                print(f"✅ Verification passed: Repository updated to {owner}/{name}")
-            else:
-                print(f"❌ Verification failed: Content doesn't match expected values")
-                print(f"Expected: REPO_OWNER={owner}, REPO_NAME={name}")
-                print(f"Content: {verify_content}")
-        
     except Exception as e:
         st.error(f"Error updating repository config: {e}")
-        print(f"❌ Error updating config: {e}")
-        import traceback
-        print(traceback.format_exc())
 
 def render_header():
     """Render modern header with gradient background"""
@@ -245,33 +220,6 @@ def render_settings_drawer():
                 
                 if current_owner and current_name:
                     st.success(f"✅ Current: {current_owner}/{current_name}")
-                    
-                    # Debug info
-                    with st.expander("🔍 Debug Info", expanded=False):
-                        st.code(f"REPO_OWNER={current_owner}\nREPO_NAME={current_name}")
-                        if st.button("🔄 Reload Config", key="reload_config"):
-                            from config.settings import load_environment
-                            load_environment()
-                            st.rerun()
-                        
-                        if st.button("🔍 Test Repository List", key="test_repos"):
-                            st.session_state.show_debug_repos = True
-                        
-                        if st.session_state.get('show_debug_repos', False):
-                            with st.spinner("Loading all repositories..."):
-                                repos = get_user_repositories()
-                            if repos:
-                                st.write(f"Found {len(repos)} repositories:")
-                                for repo in repos[:10]:  # Show first 10
-                                    st.write(f"- {repo['owner']}/{repo['name']}")
-                                if len(repos) > 10:
-                                    st.write(f"... and {len(repos) - 10} more")
-                            else:
-                                st.write("No repositories found")
-                            
-                            if st.button("❌ Close Debug", key="close_debug_repos"):
-                                st.session_state.show_debug_repos = False
-                                st.rerun()
                     
                     # Option to switch repositories
                     if st.button("🔄 Switch Repository", key="settings_switch_repo"):
@@ -362,8 +310,6 @@ def save_settings_to_env(github_token, deepseek_key, theme):
         current_owner = Config.get_repo_owner()
         current_name = Config.get_repo_name()
         
-        print(f"💾 Saving settings with repository: {current_owner}/{current_name}")
-        
         env_content = f"""# GitHub Issues Manager v6 Configuration
 
 # GitHub Settings
@@ -382,8 +328,6 @@ THEME={theme}
         with open('.env', 'w') as f:
             f.write(env_content)
         
-        print(f"📝 Saved .env with REPO_OWNER={current_owner}, REPO_NAME={current_name}")
-        
         # Clear repository selector session state
         if 'show_repo_selector' in st.session_state:
             del st.session_state.show_repo_selector
@@ -392,7 +336,6 @@ THEME={theme}
         
     except Exception as e:
         st.error(f"❌ Error saving settings: {e}")
-        print(f"❌ Save error: {e}")
 
 def render_help_drawer():
     """Render help and documentation drawer"""
