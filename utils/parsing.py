@@ -155,6 +155,82 @@ def parse_with_regex(content: str, filename: str = "") -> Tuple[str, Dict[str, A
     
     return reasoning, projects
 
+def generate_smart_milestone_name(content: str, filename: str = "") -> str:
+    """
+    Generate smart milestone name based on content analysis (4 words max)
+    """
+    content_lower = content.lower()
+    
+    # Priority-based naming (most specific first)
+    if any(word in content_lower for word in ['critical', 'urgent', 'emergency', 'breaking']):
+        if any(word in content_lower for word in ['security', 'vulnerability', 'exploit']):
+            return "🔒 Critical Security"
+        elif any(word in content_lower for word in ['bug', 'error', 'fix', 'crash']):
+            return "🚨 Critical Fixes"
+        else:
+            return "🚨 Critical Issues"
+    
+    # Architecture/structure focused
+    if any(word in content_lower for word in ['architecture', 'refactor', 'restructure', 'cleanup']):
+        if any(word in content_lower for word in ['database', 'db', 'migration']):
+            return "🏗️ Database Refactoring"
+        elif any(word in content_lower for word in ['api', 'endpoint', 'service']):
+            return "🏗️ API Refactoring"
+        else:
+            return "🏗️ Architecture Cleanup"
+    
+    # Technical debt
+    if any(word in content_lower for word in ['debt', 'legacy', 'deprecated', 'old']):
+        return "🔧 Technical Debt"
+    
+    # Performance focused
+    if any(word in content_lower for word in ['performance', 'optimization', 'speed', 'slow']):
+        return "⚡ Performance Optimization"
+    
+    # API focused
+    if any(word in content_lower for word in ['api', 'endpoint', 'rest', 'graphql']):
+        if any(word in content_lower for word in ['new', 'add', 'implement']):
+            return "⚡ API Development"
+        else:
+            return "⚡ API Updates"
+    
+    # Database focused
+    if any(word in content_lower for word in ['database', 'db', 'migration', 'schema']):
+        return "🗄️ Database Migration"
+    
+    # Security focused
+    if any(word in content_lower for word in ['security', 'auth', 'login', 'permission']):
+        return "🔒 Security Updates"
+    
+    # UI/Frontend focused
+    if any(word in content_lower for word in ['ui', 'frontend', 'interface', 'design']):
+        return "🎨 UI Development"
+    
+    # Feature development
+    if any(word in content_lower for word in ['feature', 'functionality', 'implement', 'add']):
+        return "📋 Feature Development"
+    
+    # Testing focused
+    if any(word in content_lower for word in ['test', 'testing', 'spec', 'coverage']):
+        return "🧪 Testing Sprint"
+    
+    # Documentation focused
+    if any(word in content_lower for word in ['documentation', 'docs', 'readme', 'guide']):
+        return "📚 Documentation Update"
+    
+    # Deployment focused
+    if any(word in content_lower for word in ['deploy', 'deployment', 'release', 'production']):
+        return "🚀 Deployment Sprint"
+    
+    # Fallback based on filename or generic
+    if filename:
+        clean_name = filename.replace('.md', '').replace('.txt', '').replace('_', ' ').title()
+        if len(clean_name.split()) <= 2:
+            return f"📋 {clean_name} Sprint"
+    
+    # Final fallback
+    return "📋 Development Sprint"
+
 def parse_fallback_structure(content: str, filename: str = "") -> Tuple[str, Dict[str, Any]]:
     """
     Fallback parsing for unstructured markdown
@@ -204,8 +280,8 @@ def parse_fallback_structure(content: str, filename: str = "") -> Tuple[str, Dic
             if current_milestone and current_milestone_data:
                 projects[current_milestone] = current_milestone_data
             
-            # Start new milestone
-            current_milestone = title
+            # Generate smart milestone name based on content
+            current_milestone = generate_smart_milestone_name(content, filename)
             current_milestone_data = {
                 'description': extract_description(section_content),
                 'issues': []
@@ -226,13 +302,14 @@ def parse_fallback_structure(content: str, filename: str = "") -> Tuple[str, Dic
     
     # If no structure found, create a default milestone
     if not projects:
-        projects[f"Project from {filename}"] = {
-            'description': 'Auto-generated project structure',
+        smart_name = generate_smart_milestone_name(content, filename)
+        projects[smart_name] = {
+            'description': 'Auto-generated project structure from markdown analysis',
             'issues': [
                 {
-                    'title': 'Review and organize project structure',
-                    'body': 'The uploaded markdown did not follow standard format. Please review and organize.',
-                    'labels': ['organization', 'review'],
+                    'title': '📋 Review and organize project structure',
+                    'body': 'The uploaded markdown did not follow standard format. Please review and organize the content into proper issues.',
+                    'labels': ['priority-medium', 'type-documentation', 'area-backend'],
                     'assignees': []
                 }
             ]

@@ -472,11 +472,11 @@ class GitHubAPI:
                 current_step += 1
                 
                 if progress_callback:
-                progress_callback(
-                step=current_step,
-                total=total_steps,
-                action=f"Creating milestone: {milestone_name}"
-                )
+                    progress_callback(
+                        step=current_step,
+                        total=total_steps,
+                        action=f"Creating milestone: {milestone_name}"
+                    )
                 
                 try:
                     milestone_response = self.create_milestone(

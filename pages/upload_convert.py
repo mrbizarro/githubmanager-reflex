@@ -1,11 +1,16 @@
 """
 Upload & Convert page - main file processing functionality
+With async processing for improved performance
+THREAD-SAFE VERSION - No session state access in background threads
 """
 
 import streamlit as st
 import time
 import json
+import threading
+import concurrent.futures
 from datetime import datetime
+import queue
 
 from utils.session import (
     update_processing_state, 
@@ -16,13 +21,24 @@ from utils.session import (
 from components.status import render_quick_stats
 from config.settings import get_config
 
+# Thread-safe queue for communication between background thread and main thread
+processing_queue = queue.Queue()
+
 def render_upload_page():
     """Render the upload and convert page"""
+    
+    # Check for updates from background processing
+    process_background_updates()
     
     # Quick stats if we have processed projects
     if st.session_state.get('processed_projects'):
         render_quick_stats()
         st.markdown('<div class="modern-separator"></div>', unsafe_allow_html=True)
+    
+    # Check if async processing is active
+    if st.session_state.get('async_processing', False):
+        render_async_processing_status()
+        return
     
     # Upload section
     render_upload_section()
@@ -42,6 +58,27 @@ def render_upload_page():
     if deployment_state.get('status', 'pending') != 'pending':
         st.markdown('<div class="modern-separator"></div>', unsafe_allow_html=True)
         render_deployment_section()
+
+def process_background_updates():
+    """Process updates from background thread in a thread-safe way"""
+    try:
+        while not processing_queue.empty():
+            update = processing_queue.get_nowait()
+            if update['type'] == 'progress':
+                st.session_state.processing_progress = update['progress']
+                st.session_state.processing_status = update['status']
+            elif update['type'] == 'error':
+                if 'processing_errors' not in st.session_state:
+                    st.session_state.processing_errors = []
+                st.session_state.processing_errors.append(update['error'])
+            elif update['type'] == 'complete':
+                st.session_state.processing_progress = 100
+                st.session_state.processing_status = "⚡ Processing completed!"
+                st.session_state.processed_projects = update['results']
+                st.session_state.async_processing = False
+                st.session_state.processing_total_time = update['total_time']
+    except queue.Empty:
+        pass
 
 def render_upload_section():
     """Render file upload section with modern design"""
@@ -76,7 +113,7 @@ def render_upload_section():
     if ai_enabled and get_config('ai_connected', False):
         render_alert(
             type="success",
-            title="AI Mode Active",
+            title="AI Mode Active ⚡",
             description="Upload any markdown format - AI will intelligently parse content"
         )
     elif ai_enabled and not get_config('ai_connected', False):
@@ -139,20 +176,22 @@ def render_upload_section():
         if st.button("🔄 Reset", key="reset_upload", help="Clear uploaded files"):
             st.session_state.uploaded_files = []
             st.session_state.processed_projects = None
+            st.session_state.async_processing = False
+            st.session_state.processing_errors = []
             reset_deployment_state()
             st.rerun()
     
     with col2:
-        process_disabled = not st.session_state.get('uploaded_files') or st.session_state.get('processing_state', {}).get('status') == 'processing'
+        process_disabled = not st.session_state.get('uploaded_files') or st.session_state.get('async_processing', False)
         
         if st.button(
-            "🚀 Process Files", 
+            "⚡ Process Files", 
             type="primary", 
             disabled=process_disabled,
             use_container_width=True,
             key="process_files"
         ):
-            process_uploaded_files()
+            start_async_processing(st.session_state.uploaded_files)
     
     with col3:
         if st.session_state.get('processed_projects'):
@@ -165,9 +204,361 @@ def render_upload_section():
                 key="export_processed"
             )
 
+def start_async_processing(files):
+    """Start async processing with real-time updates"""
+    
+    # Initialize processing state safely
+    st.session_state.async_processing = True
+    st.session_state.processing_results = {}
+    st.session_state.processing_progress = 0
+    st.session_state.processing_status = "Starting processing..."
+    st.session_state.processing_errors = []
+    st.session_state.processing_start_time = time.time()
+    
+    # Clear the queue
+    while not processing_queue.empty():
+        try:
+            processing_queue.get_nowait()
+        except queue.Empty:
+            break
+    
+    # Start background thread
+    threading.Thread(
+        target=background_file_processor,
+        args=(files,),
+        daemon=True
+    ).start()
+    
+    # Force UI refresh
+    st.rerun()
+
+def background_file_processor(files):
+    """
+    COMPLETELY THREAD-SAFE background processing 
+    NO access to st.session_state - only queue communication
+    """
+    
+    start_time = time.time()
+    
+    try:
+        total_files = len(files)
+        completed_files = 0
+        all_results = {}
+        
+        print(f"🚀 Starting background processing of {total_files} files")
+        
+        # Use ThreadPoolExecutor for concurrent processing
+        max_workers = min(2, total_files)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            
+            # Submit all files for processing
+            future_to_file = {
+                executor.submit(process_single_file_thread_safe, file): file 
+                for file in files
+            }
+            
+            # Process completed futures
+            for future in concurrent.futures.as_completed(future_to_file):
+                file = future_to_file[future]
+                completed_files += 1
+                
+                # Update progress through queue
+                progress = int((completed_files / total_files) * 100)
+                
+                try:
+                    processing_queue.put({
+                        'type': 'progress',
+                        'progress': progress,
+                        'status': f"Completed {file.name} ({progress}%)"
+                    })
+                except Exception as queue_error:
+                    print(f"❌ Queue error during progress update: {queue_error}")
+                
+                try:
+                    result = future.result(timeout=90)
+                    if result:
+                        # Handle multiple files with prefixes
+                        if total_files > 1:
+                            file_prefix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
+                            prefixed_result = {
+                                f"[{file_prefix}] {name}": data 
+                                for name, data in result.items()
+                            }
+                            all_results.update(prefixed_result)
+                        else:
+                            all_results.update(result)
+                        
+                        print(f"✅ Successfully processed {file.name}")
+                    
+                except concurrent.futures.TimeoutError:
+                    error_msg = f"Timeout processing {file.name} (>90s)"
+                    print(f"⏰ {error_msg}")
+                    try:
+                        processing_queue.put({
+                            'type': 'error',
+                            'error': error_msg
+                        })
+                    except Exception as queue_error:
+                        print(f"❌ Queue error during timeout: {queue_error}")
+                    
+                except Exception as e:
+                    error_msg = f"Error processing {file.name}: {str(e)}"
+                    print(f"❌ {error_msg}")
+                    try:
+                        processing_queue.put({
+                            'type': 'error',
+                            'error': error_msg
+                        })
+                    except Exception as queue_error:
+                        print(f"❌ Queue error during error: {queue_error}")
+        
+        # Complete processing
+        total_time = time.time() - start_time
+        
+        try:
+            processing_queue.put({
+                'type': 'complete',
+                'results': all_results,
+                'total_time': total_time
+            })
+        except Exception as queue_error:
+            print(f"❌ Queue error during completion: {queue_error}")
+        
+        print(f"⚡ Background processing completed in {total_time:.2f}s")
+        
+    except Exception as e:
+        # Handle any other errors
+        error_msg = f"Background processing failed: {str(e)}"
+        print(f"💥 {error_msg}")
+        
+        try:
+            processing_queue.put({
+                'type': 'error',
+                'error': error_msg
+            })
+            processing_queue.put({
+                'type': 'complete',
+                'results': {},
+                'total_time': time.time() - start_time
+            })
+        except Exception as queue_error:
+            print(f"❌ Final queue error: {queue_error}")
+
+def process_single_file_thread_safe(file):
+    """Thread-safe single file processing - NO session state access"""
+    
+    start_time = time.time()
+    
+    try:
+        # Read file content efficiently
+        content = file.read().decode('utf-8')
+        file.seek(0)  # Reset file pointer
+        
+        # Quick preprocessing
+        cleaned_content = preprocess_content_fast(content)
+        
+        # Use optimized AI parsing
+        try:
+            # Import optimized AI function
+            import sys
+            import os
+            
+            # Add the main directory to path
+            main_dir = os.path.dirname(os.path.dirname(__file__))
+            if main_dir not in sys.path:
+                sys.path.insert(0, main_dir)
+            
+            from deepseek_api import ai_parse_markdown
+            
+            # Use optimized AI parsing
+            _, structure = ai_parse_markdown(cleaned_content)
+            
+            processing_time = time.time() - start_time
+            print(f"⚡ AI processed {file.name} in {processing_time:.2f}s")
+            
+            return structure
+            
+        except Exception as ai_error:
+            print(f"❌ AI parsing failed for {file.name}: {ai_error}")
+            # Fallback to fast regex parsing
+            return fallback_regex_parsing(cleaned_content, file.name)
+        
+    except Exception as e:
+        print(f"❌ File processing failed for {file.name}: {e}")
+        return fallback_regex_parsing("# Error Processing File\n\nFailed to read file content.", file.name)
+
+def preprocess_content_fast(content: str) -> str:
+    """Lightning-fast content preprocessing"""
+    
+    # Remove excessive whitespace and empty lines
+    lines = [line.strip() for line in content.split('\n') if line.strip()]
+    cleaned = '\n'.join(lines)
+    
+    # Remove very long lines that might be data/logs
+    lines = []
+    for line in cleaned.split('\n'):
+        if len(line) > 500:  # Skip very long lines
+            lines.append(line[:500] + "...")
+        else:
+            lines.append(line)
+    
+    cleaned = '\n'.join(lines)
+    
+    # Truncate if too long
+    if len(cleaned) > 8000:
+        cleaned = cleaned[:8000] + "\n\n[Content truncated for processing efficiency]"
+    
+    return cleaned
+
+def fallback_regex_parsing(content: str, filename: str):
+    """Fast regex fallback parsing"""
+    
+    try:
+        # Simple header-based parsing
+        lines = content.split('\n')
+        current_project = None
+        projects = {}
+        current_issues = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Main project header
+            if line.startswith('# '):
+                if current_project and current_issues:
+                    projects[current_project] = {
+                        'description': f'Project: {current_project}',
+                        'issues': current_issues
+                    }
+                
+                current_project = line[2:].strip()
+                current_issues = []
+            
+            # Sub-headers as issues
+            elif line.startswith('## ') and current_project:
+                issue_title = line[3:].strip()
+                current_issues.append({
+                    'title': f'[Implementation] {issue_title}',
+                    'body': f'Implement {issue_title} as described in the requirements.',
+                    'labels': ['enhancement', 'task'],
+                    'assignees': []
+                })
+        
+        # Add final project
+        if current_project and current_issues:
+            projects[current_project] = {
+                'description': f'Project: {current_project}',
+                'issues': current_issues
+            }
+        
+        # Fallback if no structure found
+        if not projects:
+            project_name = filename.replace('.md', '').replace('.markdown', '').replace('.txt', '')
+            projects[f"Project from {project_name}"] = {
+                'description': 'Auto-generated project from markdown',
+                'issues': [{
+                    'title': '[Review] Organize project structure',
+                    'body': 'Review the uploaded markdown and organize into proper issues.',
+                    'labels': ['documentation', 'task'],
+                    'assignees': []
+                }]
+            }
+        
+        return projects
+        
+    except Exception as e:
+        print(f"❌ Regex parsing failed: {e}")
+        # Return minimal structure as last resort
+        project_name = filename.replace('.md', '').replace('.markdown', '').replace('.txt', '')
+        return {
+            f"Emergency Project - {project_name}": {
+                'description': 'Failed to parse content - manual review needed',
+                'issues': [{
+                    'title': '[Emergency] Manual review required',
+                    'body': 'Content parsing failed. Please review the original file manually.',
+                    'labels': ['bug', 'high-priority'],
+                    'assignees': []
+                }]
+            }
+        }
+
+def render_async_processing_status():
+    """Render real-time async processing status"""
+    
+    st.markdown("### ⚡ Processing Files")
+    
+    # Progress bar
+    progress = st.session_state.get('processing_progress', 0)
+    status = st.session_state.get('processing_status', 'Processing...')
+    
+    st.progress(progress / 100, text=f"{status}")
+    
+    # Processing info
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.session_state.get('processing_start_time'):
+            elapsed = time.time() - st.session_state.processing_start_time
+            st.metric("Elapsed Time", f"{elapsed:.1f}s")
+    
+    with col2:
+        files_total = len(st.session_state.get('uploaded_files', []))
+        files_done = int((progress / 100) * files_total) if progress > 0 else 0
+        st.metric("Files", f"{files_done}/{files_total}")
+    
+    with col3:
+        errors = st.session_state.get('processing_errors', [])
+        st.metric("Errors", len(errors))
+    
+    # Show errors if any
+    if errors:
+        with st.expander(f"❌ Errors ({len(errors)})", expanded=False):
+            for error in errors[-3:]:  # Show last 3 errors
+                st.error(error)
+    
+    # Auto-refresh during processing
+    if st.session_state.async_processing:
+        time.sleep(0.8)  # Refresh rate
+        st.rerun()
+    else:
+        # Processing completed
+        if st.session_state.get('processed_projects'):
+            total_time = st.session_state.get('processing_total_time', 0)
+            project_count = len(st.session_state.processed_projects)
+            
+            st.success(f"✅ Processing completed in {total_time:.2f}s!")
+            st.info(f"⚡ Created {project_count} project(s) ready for deployment")
+            
+            # Performance metrics
+            files_count = len(st.session_state.get('uploaded_files', []))
+            avg_time = total_time / files_count if files_count > 0 else 0
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Avg Time per File", f"{avg_time:.1f}s")
+            with col2:
+                st.metric("Processing Time", f"{total_time:.1f}s")
+            
+            # Reset button
+            if st.button("🔄 Process New Files", use_container_width=True):
+                st.session_state.async_processing = False
+                st.session_state.uploaded_files = []
+                st.session_state.processed_projects = None
+                st.session_state.processing_errors = []
+                st.rerun()
+
 def render_processing_section():
     """Render processing status and progress"""
     
+    # Show async processing status if active
+    if st.session_state.get('async_processing', False):
+        render_async_processing_status()
+        return
+    
+    # Legacy processing status (kept for compatibility)
     processing_state = st.session_state.get('processing_state', {})
     status = processing_state.get('status', 'idle')
     
@@ -255,7 +646,7 @@ def render_project_summary(projects):
         st.metric("Avg Issues/Milestone", avg_issues)
     
     with col4:
-        parsing_mode = "AI" if st.session_state.get('ai_enabled', True) else "Standard"
+        parsing_mode = "AI ⚡" if st.session_state.get('ai_enabled', True) else "Standard"
         st.metric("Parsing Mode", parsing_mode)
 
 def render_project_editor(projects):
@@ -479,97 +870,17 @@ def render_alert(type, title, description):
     </div>
     """, unsafe_allow_html=True)
 
+# Legacy function maintained for compatibility
 def process_uploaded_files():
-    """Process uploaded markdown files"""
+    """Legacy sync processing function - maintained for compatibility"""
     
     files = st.session_state.get('uploaded_files', [])
     if not files:
         st.error("No files to process")
         return
     
-    # Update processing state
-    update_processing_state(status='processing', progress=0, message='Starting file processing...')
-    
-    # Force UI update
-    st.rerun()
-    
-    try:
-        # Process files immediately without delays
-        all_projects = {}
-        total_files = len(files)
-        
-        for i, file in enumerate(files):
-            # Update progress
-            progress = int((i / total_files) * 50)  # First 50% for reading
-            update_processing_state(
-                progress=progress, 
-                message=f"Reading {file.name}..."
-            )
-            
-            # Read file content
-            try:
-                content = file.read().decode('utf-8')
-                file.seek(0)  # Reset file pointer
-            except Exception as e:
-                st.error(f"Failed to read {file.name}: {str(e)}")
-                continue
-            
-            # Update progress for parsing
-            progress = int(50 + (i / total_files) * 50)  # Second 50% for parsing
-            update_processing_state(
-                progress=progress, 
-                message=f"Parsing {file.name}..."
-            )
-            
-            # Use AI or standard parsing
-            ai_enabled = st.session_state.get('ai_enabled', True) and get_config('ai_connected', False)
-            
-            try:
-                if ai_enabled:
-                    # Try AI parsing with timeout
-                    parsed_project = simulate_ai_parsing(content, file.name)
-                else:
-                    # Use standard parsing
-                    parsed_project = simulate_standard_parsing(content, file.name)
-                
-                if parsed_project:
-                    # Add file prefix for multiple files
-                    if total_files > 1:
-                        file_prefix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
-                        prefixed_project = {
-                            f"[{file_prefix}] {name}": data 
-                            for name, data in parsed_project.items()
-                        }
-                        all_projects.update(prefixed_project)
-                    else:
-                        all_projects.update(parsed_project)
-                else:
-                    st.warning(f"No content extracted from {file.name}")
-                    
-            except Exception as e:
-                st.error(f"Failed to parse {file.name}: {str(e)}")
-                continue
-        
-        # Complete processing
-        update_processing_state(
-            status='completed',
-            progress=100,
-            message='Processing completed successfully!',
-            results=all_projects
-        )
-        
-        # Store results
-        st.session_state.processed_projects = all_projects
-        
-        st.success(f"✅ Processed {total_files} files successfully!")
-        st.rerun()
-        
-    except Exception as e:
-        update_processing_state(
-            status='error',
-            message=f'Processing failed: {str(e)}'
-        )
-        st.error(f"❌ Processing failed: {str(e)}")
+    # Redirect to async processing
+    start_async_processing(files)
 
 def simulate_ai_parsing(content, filename):
     """Use real DeepSeek AI to parse markdown content with timeout"""
