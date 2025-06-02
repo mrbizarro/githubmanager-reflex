@@ -54,8 +54,19 @@ class GitHubAPI:
             return False, f"Connection error: {str(e)}"
     
     def create_milestone(self, title: str, description: str = "", due_date: str = None, state: str = "open") -> Dict[str, Any]:
-        """Create a new milestone"""
+        """Create a new milestone or return existing one if it already exists"""
         
+        # First, check if milestone already exists
+        try:
+            existing_milestones = self.get_milestones(state="all")
+            for milestone in existing_milestones:
+                if milestone['title'].lower() == title.lower():
+                    print(f"⚠️ Milestone '{title}' already exists (#{milestone['number']})")
+                    return milestone
+        except Exception as e:
+            print(f"Warning: Could not check existing milestones: {e}")
+        
+        # Create new milestone
         data = {
             "title": title,
             "description": description,
@@ -73,6 +84,20 @@ class GitHubAPI:
             
             if response.status_code == 201:
                 return response.json()
+            elif response.status_code == 422:
+                # Handle "already exists" error by finding the existing milestone
+                try:
+                    existing_milestones = self.get_milestones(state="all")
+                    for milestone in existing_milestones:
+                        if milestone['title'].lower() == title.lower():
+                            print(f"✅ Found existing milestone '{title}' (#{milestone['number']})")
+                            return milestone
+                    
+                    # If we can't find it, raise the original error
+                    raise GitHubAPIError(f"Milestone '{title}' already exists but could not be found")
+                    
+                except Exception as find_error:
+                    raise GitHubAPIError(f"Failed to create milestone: {response.status_code} - {response.text}")
             else:
                 raise GitHubAPIError(f"Failed to create milestone: {response.status_code} - {response.text}")
                 
@@ -81,7 +106,7 @@ class GitHubAPI:
     
     def create_issue(self, title: str, body: str = "", milestone_number: int = None, 
                     labels: List[str] = None, assignees: List[str] = None) -> Dict[str, Any]:
-        """Create a new issue"""
+        """Create a new issue with better error handling for milestones"""
         
         data = {
             "title": title,
@@ -89,10 +114,29 @@ class GitHubAPI:
         }
         
         if milestone_number:
-            data["milestone"] = milestone_number
+            # Verify milestone exists before trying to assign it
+            try:
+                milestone_response = self.session.get(
+                    f"{self.base_url}/repos/{self.owner}/{self.repo}/milestones/{milestone_number}"
+                )
+                if milestone_response.status_code != 200:
+                    print(f"⚠️ Warning: Milestone #{milestone_number} not found, creating issue without milestone")
+                    milestone_number = None
+                else:
+                    data["milestone"] = milestone_number
+            except Exception as e:
+                print(f"⚠️ Warning: Could not verify milestone #{milestone_number}: {e}")
+                milestone_number = None
         
         if labels:
-            data["labels"] = labels
+            # Filter out invalid labels (too long, invalid characters, etc.)
+            valid_labels = []
+            for label in labels:
+                if len(label) <= 50 and label.strip():  # GitHub label limit is 50 chars
+                    valid_labels.append(label.strip())
+                else:
+                    print(f"⚠️ Warning: Skipping invalid label '{label}' (too long or empty)")
+            data["labels"] = valid_labels
         
         if assignees:
             data["assignees"] = assignees
@@ -105,11 +149,22 @@ class GitHubAPI:
             
             if response.status_code == 201:
                 return response.json()
+            elif response.status_code == 422:
+                # Try to parse the error and provide helpful info
+                try:
+                    error_data = response.json()
+                    if 'errors' in error_data:
+                        error_details = ', '.join([f"{err.get('field', 'unknown')}: {err.get('code', 'unknown')}" for err in error_data['errors']])
+                        raise GitHubAPIError(f"Validation failed for issue '{title}': {error_details}")
+                    else:
+                        raise GitHubAPIError(f"Failed to create issue '{title}': {response.text}")
+                except json.JSONDecodeError:
+                    raise GitHubAPIError(f"Failed to create issue '{title}': {response.status_code} - {response.text}")
             else:
-                raise GitHubAPIError(f"Failed to create issue: {response.status_code} - {response.text}")
+                raise GitHubAPIError(f"Failed to create issue '{title}': {response.status_code} - {response.text}")
                 
         except requests.exceptions.RequestException as e:
-            raise GitHubAPIError(f"Network error creating issue: {str(e)}")
+            raise GitHubAPIError(f"Network error creating issue '{title}': {str(e)}")
     
     def get_issues(self, state: str = "all", sort: str = "created", 
                   direction: str = "desc", per_page: int = 100, page: int = 1) -> List[Dict[str, Any]]:

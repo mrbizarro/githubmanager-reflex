@@ -109,8 +109,9 @@ def create_optimized_prompt(markdown_content: str, content_type: str = "auto") -
     prompt = f"""Convert this markdown to GitHub project structure. Rules:
 
 🎯 STRICT RULES:
-- ONE milestone with descriptive name (4 words max) based on actual content
-- Analyze content to create smart milestone name like "🚨 Critical Fixes" or "⚡ API Refactoring"
+- ONE milestone with CLEAN descriptive name (NO emojis, NO brackets, NO prefixes)
+- Milestone name must be PLAIN TEXT ONLY like "Critical Fixes" or "API Refactoring"
+- NEVER use [bracketed-text] or emoji prefixes in milestone names
 - ONLY use explicit content - no inference/assumptions  
 - Group related tasks into 2-8 hour work sessions
 - Add priority emojis to issue titles (🚨⚡📋📝)
@@ -119,19 +120,19 @@ def create_optimized_prompt(markdown_content: str, content_type: str = "auto") -
 
 📐 OUTPUT: JSON with "reasoning" and "structure"
 
-Milestone Name Examples (based on content):
-- "🚨 Critical Fixes" (if content has bugs/errors)
-- "⚡ API Refactoring" (if content has API work)
-- "🏗️ Architecture Cleanup" (if content has structural issues)
-- "🔧 Database Migration" (if content has DB work)
-- "📋 Feature Development" (if content has new features)
-- "🔒 Security Updates" (if content has security issues)
+Milestone Name Examples (PLAIN TEXT ONLY):
+- "Critical Fixes" (if content has bugs/errors)
+- "API Refactoring" (if content has API work)
+- "Architecture Cleanup" (if content has structural issues)
+- "Database Migration" (if content has DB work)
+- "Feature Development" (if content has new features)
+- "Security Updates" (if content has security issues)
 
 Format:
 {{
   "reasoning": "Brief analysis of content and milestone naming decision",
   "structure": {{
-    "🚨 Critical Fixes": {{
+    "Critical Fixes": {{
       "description": "Resolve urgent bugs and stability issues identified in the codebase",
       "issues": [
         {{  
@@ -327,8 +328,10 @@ def test_deepseek_connection() -> Tuple[bool, str]:
 def clear_cache():
     """Clear processing cache if needed"""
     global PROCESSING_CACHE
+    old_count = len(PROCESSING_CACHE)
     PROCESSING_CACHE.clear()
-    print("✅ Processing cache cleared")
+    print(f"✅ Processing cache cleared ({old_count} items removed)")
+    return f"Cleared {old_count} cached items"
 
 def get_cache_stats() -> dict:
     """Get cache statistics"""

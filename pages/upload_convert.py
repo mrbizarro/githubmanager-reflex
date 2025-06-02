@@ -247,7 +247,7 @@ def background_file_processor(files):
         
         print(f"🚀 Starting background processing of {total_files} files")
         
-        # Use ThreadPoolExecutor for concurrent processing
+        # Use ThreadPoolExecutor for concurrent processing (max 2 to avoid overwhelming AI API)
         max_workers = min(2, total_files)
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -278,16 +278,29 @@ def background_file_processor(files):
                 try:
                     result = future.result(timeout=90)
                     if result:
-                        # Handle multiple files with prefixes
-                        if total_files > 1:
-                            file_prefix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
-                            prefixed_result = {
-                                f"[{file_prefix}] {name}": data 
-                                for name, data in result.items()
-                            }
-                            all_results.update(prefixed_result)
-                        else:
-                            all_results.update(result)
+                        # In batch mode, ensure milestone names are unique across files
+                        for milestone_name, milestone_data in result.items():
+                            # For batch uploads, create unique milestone names if there are duplicates
+                            unique_milestone_name = milestone_name
+                            counter = 1
+                            
+                            # If this milestone name already exists, make it unique
+                            while unique_milestone_name in all_results:
+                                # Clean the file name for a readable suffix
+                                file_suffix = file.name.replace('.md', '').replace('.markdown', '').replace('.txt', '')
+                                file_suffix = file_suffix.replace('_', ' ').replace('-', ' ').title()
+                                
+                                if counter == 1:
+                                    unique_milestone_name = f"{milestone_name} ({file_suffix})"
+                                else:
+                                    unique_milestone_name = f"{milestone_name} ({file_suffix} {counter})"
+                                counter += 1
+                            
+                            # Add the milestone with unique name
+                            all_results[unique_milestone_name] = milestone_data
+                            
+                            if unique_milestone_name != milestone_name:
+                                print(f"⚠️ Renamed milestone '{milestone_name}' to '{unique_milestone_name}' to avoid conflicts")
                         
                         print(f"✅ Successfully processed {file.name}")
                     
@@ -358,9 +371,9 @@ def process_single_file_thread_safe(file):
         # Quick preprocessing
         cleaned_content = preprocess_content_fast(content)
         
-        # Use optimized AI parsing
+        # Use AI parsing - no fallbacks
         try:
-            # Import optimized AI function
+            # Import AI function
             import sys
             import os
             
@@ -371,7 +384,7 @@ def process_single_file_thread_safe(file):
             
             from deepseek_api import ai_parse_markdown
             
-            # Use optimized AI parsing
+            # Use AI parsing - this is the only way
             _, structure = ai_parse_markdown(cleaned_content)
             
             processing_time = time.time() - start_time
@@ -380,13 +393,15 @@ def process_single_file_thread_safe(file):
             return structure
             
         except Exception as ai_error:
-            print(f"❌ AI parsing failed for {file.name}: {ai_error}")
-            # Fallback to fast regex parsing
-            return fallback_regex_parsing(cleaned_content, file.name)
+            # If AI fails, that's a real error - don't mask it
+            error_msg = f"AI parsing failed for {file.name}: {ai_error}"
+            print(f"❌ {error_msg}")
+            raise Exception(error_msg)
         
     except Exception as e:
-        print(f"❌ File processing failed for {file.name}: {e}")
-        return fallback_regex_parsing("# Error Processing File\n\nFailed to read file content.", file.name)
+        error_msg = f"File processing failed for {file.name}: {e}"
+        print(f"❌ {error_msg}")
+        raise Exception(error_msg)
 
 def preprocess_content_fast(content: str) -> str:
     """Lightning-fast content preprocessing"""
@@ -410,80 +425,6 @@ def preprocess_content_fast(content: str) -> str:
         cleaned = cleaned[:8000] + "\n\n[Content truncated for processing efficiency]"
     
     return cleaned
-
-def fallback_regex_parsing(content: str, filename: str):
-    """Fast regex fallback parsing"""
-    
-    try:
-        # Simple header-based parsing
-        lines = content.split('\n')
-        current_project = None
-        projects = {}
-        current_issues = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Main project header
-            if line.startswith('# '):
-                if current_project and current_issues:
-                    projects[current_project] = {
-                        'description': f'Project: {current_project}',
-                        'issues': current_issues
-                    }
-                
-                current_project = line[2:].strip()
-                current_issues = []
-            
-            # Sub-headers as issues
-            elif line.startswith('## ') and current_project:
-                issue_title = line[3:].strip()
-                current_issues.append({
-                    'title': f'[Implementation] {issue_title}',
-                    'body': f'Implement {issue_title} as described in the requirements.',
-                    'labels': ['enhancement', 'task'],
-                    'assignees': []
-                })
-        
-        # Add final project
-        if current_project and current_issues:
-            projects[current_project] = {
-                'description': f'Project: {current_project}',
-                'issues': current_issues
-            }
-        
-        # Fallback if no structure found
-        if not projects:
-            project_name = filename.replace('.md', '').replace('.markdown', '').replace('.txt', '')
-            projects[f"Project from {project_name}"] = {
-                'description': 'Auto-generated project from markdown',
-                'issues': [{
-                    'title': '[Review] Organize project structure',
-                    'body': 'Review the uploaded markdown and organize into proper issues.',
-                    'labels': ['documentation', 'task'],
-                    'assignees': []
-                }]
-            }
-        
-        return projects
-        
-    except Exception as e:
-        print(f"❌ Regex parsing failed: {e}")
-        # Return minimal structure as last resort
-        project_name = filename.replace('.md', '').replace('.markdown', '').replace('.txt', '')
-        return {
-            f"Emergency Project - {project_name}": {
-                'description': 'Failed to parse content - manual review needed',
-                'issues': [{
-                    'title': '[Emergency] Manual review required',
-                    'body': 'Content parsing failed. Please review the original file manually.',
-                    'labels': ['bug', 'high-priority'],
-                    'assignees': []
-                }]
-            }
-        }
 
 def render_async_processing_status():
     """Render real-time async processing status"""
@@ -883,10 +824,10 @@ def process_uploaded_files():
     start_async_processing(files)
 
 def simulate_ai_parsing(content, filename):
-    """Use real DeepSeek AI to parse markdown content with timeout"""
+    """Use DeepSeek AI to parse markdown content - AI ONLY"""
     
     try:
-        # Import the real parsing function
+        # Import the AI parsing function
         import sys
         import os
         
@@ -897,49 +838,20 @@ def simulate_ai_parsing(content, filename):
         
         from deepseek_api import ai_parse_markdown
         
-        # Use real AI parsing with progress indication
+        # Use AI parsing with progress indication
         update_processing_state(message=f"AI analyzing {filename}...")
         reasoning, structure = ai_parse_markdown(content)
         
         return structure
         
     except ImportError as e:
-        st.warning(f"AI module not available: {str(e)}. Using standard parsing.")
-        return simulate_standard_parsing(content, filename)
+        error_msg = f"AI module not available: {str(e)}"
+        st.error(error_msg)
+        raise Exception(error_msg)
     except Exception as e:
-        # If AI fails, fall back to standard parsing
-        st.warning(f"AI parsing failed for {filename}: {str(e)}. Using standard parsing.")
-        return simulate_standard_parsing(content, filename)
-
-def simulate_standard_parsing(content, filename):
-    """Use real regex parsing of markdown content"""
-    
-    try:
-        # Import the real parsing function
-        import sys
-        import os
-        
-        # Add the cleanup_backup directory to path
-        cleanup_dir = os.path.join(os.path.dirname(__file__), '..', 'cleanup_backup')
-        cleanup_dir = os.path.abspath(cleanup_dir)
-        
-        if cleanup_dir not in sys.path:
-            sys.path.insert(0, cleanup_dir)
-        
-        from parse_markdown import parse_markdown_regex
-        
-        # Use real regex parsing
-        update_processing_state(message=f"Standard parsing {filename}...")
-        structure = parse_markdown_regex(content)
-        
-        return structure
-        
-    except ImportError as e:
-        st.error(f"Standard parsing module not found: {str(e)}")
-        return {}
-    except Exception as e:
-        st.error(f"Standard parsing failed for {filename}: {str(e)}")
-        return {}
+        error_msg = f"AI parsing failed for {filename}: {str(e)}"
+        st.error(error_msg)
+        raise Exception(error_msg)
 
 def start_deployment():
     """Start GitHub deployment process with automatic label setup"""
