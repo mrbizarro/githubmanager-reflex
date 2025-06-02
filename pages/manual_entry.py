@@ -575,7 +575,7 @@ def deploy_manual_entries(dry_run=False, create_labels=True):
     simulate_manual_deployment(milestones, dry_run, create_labels)
 
 def simulate_manual_deployment(milestones, dry_run, create_labels):
-    """Simulate deployment of manual entries"""
+    """Deploy manual entries using real GitHub API"""
     
     import time
     
@@ -585,6 +585,13 @@ def simulate_manual_deployment(milestones, dry_run, create_labels):
     current_step = 0
     
     try:
+        if not dry_run:
+            # Import real GitHub API functions
+            from utils.github_api import GitHubAPI, GitHubAPIError
+            
+            # Initialize GitHub API
+            api = GitHubAPI()
+        
         for milestone_name, milestone_data in milestones.items():
             current_step += 1
             progress = int((current_step / total_steps) * 100)
@@ -598,8 +605,30 @@ def simulate_manual_deployment(milestones, dry_run, create_labels):
             
             add_deployment_log('🎯', action)
             
-            # Simulate API delay
-            time.sleep(1)
+            if dry_run:
+                # Simulate delay for dry run
+                time.sleep(1)
+                milestone_number = 999  # Mock number for dry run
+            else:
+                # Create milestone using real API
+                try:
+                    milestone_response = api.create_milestone(
+                        title=milestone_name,
+                        description=milestone_data.get('description', ''),
+                        state=milestone_data.get('state', 'open'),
+                        due_date=milestone_data.get('due_date')
+                    )
+                    
+                    milestone_number = milestone_response['number']
+                    
+                    # Add delay to avoid rate limiting
+                    time.sleep(0.5)
+                    
+                except GitHubAPIError as e:
+                    error_msg = f"Failed to create milestone '{milestone_name}': {str(e)}"
+                    st.session_state.deployment_state['errors'].append(error_msg)
+                    add_deployment_log('❌', error_msg)
+                    continue
             
             # Update counts
             if not dry_run:
@@ -607,10 +636,10 @@ def simulate_manual_deployment(milestones, dry_run, create_labels):
                     created_milestones=st.session_state.deployment_state['created_milestones'] + 1
                 )
             
-            success_msg = f"{'Would create' if dry_run else 'Created'} milestone: {milestone_name}"
+            success_msg = f"{'Would create' if dry_run else 'Created'} milestone #{milestone_number}: {milestone_name}"
             add_deployment_log('✅', success_msg)
             
-            # Process issues
+            # Process issues for this milestone
             for issue in milestone_data.get('issues', []):
                 current_step += 1
                 progress = int((current_step / total_steps) * 100)
@@ -626,8 +655,31 @@ def simulate_manual_deployment(milestones, dry_run, create_labels):
                 
                 add_deployment_log('📋', action)
                 
-                # Simulate API delay
-                time.sleep(1)
+                if dry_run:
+                    # Simulate delay for dry run
+                    time.sleep(1)
+                    issue_number = 999  # Mock number for dry run
+                else:
+                    # Create issue using real API
+                    try:
+                        issue_response = api.create_issue(
+                            title=issue_title,
+                            body=issue.get('body', ''),
+                            milestone_number=milestone_number,
+                            labels=issue.get('labels', []),
+                            assignees=issue.get('assignees', [])
+                        )
+                        
+                        issue_number = issue_response['number']
+                        
+                        # Add delay to avoid rate limiting
+                        time.sleep(0.5)
+                        
+                    except GitHubAPIError as e:
+                        error_msg = f"Failed to create issue '{issue_title}': {str(e)}"
+                        st.session_state.deployment_state['errors'].append(error_msg)
+                        add_deployment_log('❌', error_msg)
+                        continue
                 
                 # Update counts
                 if not dry_run:
@@ -635,7 +687,7 @@ def simulate_manual_deployment(milestones, dry_run, create_labels):
                         created_issues=st.session_state.deployment_state['created_issues'] + 1
                     )
                 
-                success_msg = f"{'Would create' if dry_run else 'Created'} issue: {short_title}"
+                success_msg = f"{'Would create' if dry_run else 'Created'} issue #{issue_number}: {short_title}"
                 add_deployment_log('✅', success_msg)
         
         # Deployment completed

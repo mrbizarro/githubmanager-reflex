@@ -112,14 +112,15 @@ class GitHubAPI:
             raise GitHubAPIError(f"Network error creating issue: {str(e)}")
     
     def get_issues(self, state: str = "all", sort: str = "created", 
-                  direction: str = "desc", per_page: int = 100) -> List[Dict[str, Any]]:
-        """Get repository issues"""
+                  direction: str = "desc", per_page: int = 100, page: int = 1) -> List[Dict[str, Any]]:
+        """Get repository issues with pagination support"""
         
         params = {
             "state": state,
             "sort": sort,
             "direction": direction,
-            "per_page": per_page
+            "per_page": min(per_page, 100),  # GitHub max is 100
+            "page": page
         }
         
         try:
@@ -136,6 +137,44 @@ class GitHubAPI:
         except requests.exceptions.RequestException as e:
             raise GitHubAPIError(f"Network error getting issues: {str(e)}")
     
+    def get_all_issues(self, state: str = "all", sort: str = "created", 
+                      direction: str = "desc", progress_callback=None) -> List[Dict[str, Any]]:
+        """Get ALL repository issues with automatic pagination"""
+        
+        all_issues = []
+        page = 1
+        per_page = 100  # GitHub's max per page
+        
+        while True:
+            if progress_callback:
+                progress_callback(f"Loading page {page}...")
+            
+            page_issues = self.get_issues(
+                state=state,
+                sort=sort,
+                direction=direction,
+                per_page=per_page,
+                page=page
+            )
+            
+            if not page_issues:  # No more issues
+                break
+            
+            # Filter out pull requests (GitHub includes them in issues endpoint)
+            issues_only = [issue for issue in page_issues if 'pull_request' not in issue]
+            all_issues.extend(issues_only)
+            
+            # If we got fewer issues than per_page, we're done
+            if len(page_issues) < per_page:
+                break
+                
+            page += 1
+        
+        if progress_callback:
+            progress_callback(f"Loaded {len(all_issues)} issues total")
+        
+        return all_issues
+    
     def get_milestones(self, state: str = "open", sort: str = "created", 
                       direction: str = "desc") -> List[Dict[str, Any]]:
         """Get repository milestones"""
@@ -143,7 +182,8 @@ class GitHubAPI:
         params = {
             "state": state,
             "sort": sort,
-            "direction": direction
+            "direction": direction,
+            "per_page": 100  # Ensure we get all milestones
         }
         
         try:
@@ -163,7 +203,10 @@ class GitHubAPI:
     def close_issue(self, issue_number: int) -> Dict[str, Any]:
         """Close an issue"""
         
-        data = {"state": "closed"}
+        data = {
+            "state": "closed",
+            "state_reason": "completed"  # Mark as completed
+        }
         
         try:
             response = self.session.patch(
@@ -173,11 +216,13 @@ class GitHubAPI:
             
             if response.status_code == 200:
                 return response.json()
+            elif response.status_code == 404:
+                raise GitHubAPIError(f"Issue #{issue_number} not found")
             else:
-                raise GitHubAPIError(f"Failed to close issue: {response.status_code} - {response.text}")
+                raise GitHubAPIError(f"Failed to close issue #{issue_number}: {response.status_code} - {response.text}")
                 
         except requests.exceptions.RequestException as e:
-            raise GitHubAPIError(f"Network error closing issue: {str(e)}")
+            raise GitHubAPIError(f"Network error closing issue #{issue_number}: {str(e)}")
     
     def delete_milestone(self, milestone_number: int) -> bool:
         """Delete a milestone"""
@@ -187,8 +232,10 @@ class GitHubAPI:
                 f"{self.base_url}/repos/{self.owner}/{self.repo}/milestones/{milestone_number}"
             )
             
-            if response.status_code == 204:
+            if response.status_code == 204:  # No Content - Success
                 return True
+            elif response.status_code == 404:
+                raise GitHubAPIError(f"Milestone #{milestone_number} not found")
             else:
                 raise GitHubAPIError(f"Failed to delete milestone: {response.status_code} - {response.text}")
                 
@@ -246,7 +293,7 @@ class GitHubAPI:
         except requests.exceptions.RequestException as e:
             raise GitHubAPIError(f"Network error deleting label: {str(e)}")
     
-    def search_issues(self, query: str) -> List[Dict[str, Any]]:
+    def search_issues(self, query: str, per_page: int = 100) -> List[Dict[str, Any]]:
         """Search issues using GitHub search API"""
         
         # Add repository qualifier to query
@@ -255,7 +302,8 @@ class GitHubAPI:
         params = {
             "q": full_query,
             "sort": "updated",
-            "order": "desc"
+            "order": "desc",
+            "per_page": min(per_page, 100)  # GitHub search API max is 100
         }
         
         try:
@@ -269,14 +317,18 @@ class GitHubAPI:
         except requests.exceptions.RequestException as e:
             raise GitHubAPIError(f"Network error searching issues: {str(e)}")
     
-    def bulk_close_issues(self, issue_numbers: List[int]) -> Tuple[int, int, List[str]]:
+    def bulk_close_issues(self, issue_numbers: List[int], progress_callback=None) -> Tuple[int, int, List[str]]:
         """Close multiple issues in bulk"""
         
         successful = 0
         failed = 0
         errors = []
+        total = len(issue_numbers)
         
-        for issue_number in issue_numbers:
+        for i, issue_number in enumerate(issue_numbers, 1):
+            if progress_callback:
+                progress_callback(f"Closing issue #{issue_number} ({i}/{total})")
+            
             try:
                 self.close_issue(issue_number)
                 successful += 1

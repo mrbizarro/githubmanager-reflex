@@ -554,60 +554,41 @@ def process_uploaded_files():
         st.error(f"❌ Processing failed: {str(e)}")
 
 def simulate_ai_parsing(content, filename):
-    """Simulate AI parsing of markdown content"""
+    """Use real DeepSeek AI to parse markdown content"""
     
-    # This would be replaced with actual AI parsing logic
-    # For now, return a mock parsed structure
-    
-    mock_project = {
-        f"AI Parsed Project from {filename}": {
-            'description': 'Intelligently parsed project structure',
-            'issues': [
-                {
-                    'title': 'Setup project foundation',
-                    'body': 'Initialize project structure and dependencies',
-                    'labels': ['setup', 'foundation'],
-                    'assignees': []
-                },
-                {
-                    'title': 'Implement core features',
-                    'body': 'Build the main functionality',
-                    'labels': ['feature', 'core'],
-                    'assignees': []
-                }
-            ]
-        }
-    }
-    
-    return mock_project
+    try:
+        # Import the real parsing function
+        from deepseek_api import ai_parse_markdown
+        
+        # Use real AI parsing
+        reasoning, structure = ai_parse_markdown(content)
+        
+        return structure
+        
+    except Exception as e:
+        # If AI fails, fall back to standard parsing
+        st.warning(f"AI parsing failed for {filename}, falling back to standard parsing: {str(e)}")
+        return simulate_standard_parsing(content, filename)
 
 def simulate_standard_parsing(content, filename):
-    """Simulate standard regex parsing of markdown content"""
+    """Use real regex parsing of markdown content"""
     
-    # This would be replaced with actual regex parsing logic
-    # For now, return a mock parsed structure
-    
-    mock_project = {
-        f"Standard Parsed Project from {filename}": {
-            'description': 'Parsed using traditional regex patterns',
-            'issues': [
-                {
-                    'title': 'Standard issue 1',
-                    'body': 'First issue from standard parsing',
-                    'labels': ['standard', 'parsed'],
-                    'assignees': []
-                },
-                {
-                    'title': 'Standard issue 2', 
-                    'body': 'Second issue from standard parsing',
-                    'labels': ['standard', 'feature'],
-                    'assignees': []
-                }
-            ]
-        }
-    }
-    
-    return mock_project
+    try:
+        # Import the real parsing function
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'cleanup_backup'))
+        
+        from parse_markdown import parse_markdown_regex
+        
+        # Use real regex parsing
+        structure = parse_markdown_regex(content)
+        
+        return structure
+        
+    except Exception as e:
+        st.error(f"Parsing failed for {filename}: {str(e)}")
+        return {}
 
 def start_deployment():
     """Start GitHub deployment process"""
@@ -634,7 +615,7 @@ def start_deployment():
     simulate_github_deployment(projects)
 
 def simulate_github_deployment(projects):
-    """Simulate GitHub API deployment process"""
+    """Use real GitHub API for deployment"""
     
     total_milestones = len(projects)
     total_issues = sum(len(m.get('issues', [])) for m in projects.values())
@@ -642,6 +623,12 @@ def simulate_github_deployment(projects):
     current_step = 0
     
     try:
+        # Import real GitHub API functions
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Initialize GitHub API
+        api = GitHubAPI()
+        
         # Process each milestone and its issues
         for milestone_name, milestone_data in projects.items():
             current_step += 1
@@ -655,34 +642,69 @@ def simulate_github_deployment(projects):
             
             add_deployment_log('🎯', f'Creating milestone: {milestone_name}')
             
-            # Simulate API delay
-            time.sleep(1)
-            
-            # Update milestone count
-            update_deployment_state(created_milestones=st.session_state.deployment_state['created_milestones'] + 1)
-            add_deployment_log('✅', f'Created milestone: {milestone_name}')
-            
-            # Process issues
-            for issue_index, issue in enumerate(milestone_data.get('issues', [])):
-                current_step += 1
-                progress = int((current_step / total_steps) * 100)
-                
-                issue_title = issue.get('title', f'Issue {issue_index + 1}')
-                short_title = issue_title[:40] + '...' if len(issue_title) > 40 else issue_title
-                
-                update_deployment_state(
-                    progress=progress,
-                    current_action=f"Creating issue: {short_title}"
+            # Create milestone using real API
+            try:
+                milestone_response = api.create_milestone(
+                    title=milestone_name,
+                    description=milestone_data.get('description', ''),
+                    state=milestone_data.get('state', 'open'),
+                    due_date=milestone_data.get('due_date')
                 )
                 
-                add_deployment_log('📋', f'Creating issue: {short_title}')
+                milestone_number = milestone_response['number']
                 
-                # Simulate API delay
-                time.sleep(1)
+                # Add small delay to avoid rate limiting
+                time.sleep(0.5)
                 
-                # Update issue count
-                update_deployment_state(created_issues=st.session_state.deployment_state['created_issues'] + 1)
-                add_deployment_log('✅', f'Created issue: {short_title}')
+                # Update milestone count
+                update_deployment_state(created_milestones=st.session_state.deployment_state['created_milestones'] + 1)
+                add_deployment_log('✅', f'Created milestone #{milestone_number}: {milestone_name}')
+                
+                # Process issues for this milestone
+                for issue_index, issue in enumerate(milestone_data.get('issues', [])):
+                    current_step += 1
+                    progress = int((current_step / total_steps) * 100)
+                    
+                    issue_title = issue.get('title', f'Issue {issue_index + 1}')
+                    short_title = issue_title[:40] + '...' if len(issue_title) > 40 else issue_title
+                    
+                    update_deployment_state(
+                        progress=progress,
+                        current_action=f"Creating issue: {short_title}"
+                    )
+                    
+                    add_deployment_log('📋', f'Creating issue: {short_title}')
+                    
+                    # Create issue using real API
+                    try:
+                        issue_response = api.create_issue(
+                            title=issue_title,
+                            body=issue.get('body', ''),
+                            milestone_number=milestone_number,
+                            labels=issue.get('labels', []),
+                            assignees=issue.get('assignees', [])
+                        )
+                        
+                        issue_number = issue_response['number']
+                        
+                        # Add delay to avoid rate limiting
+                        time.sleep(0.5)
+                        
+                        # Update issue count
+                        update_deployment_state(created_issues=st.session_state.deployment_state['created_issues'] + 1)
+                        add_deployment_log('✅', f'Created issue #{issue_number}: {short_title}')
+                        
+                    except GitHubAPIError as e:
+                        error_msg = f"Failed to create issue '{issue_title}': {str(e)}"
+                        st.session_state.deployment_state['errors'].append(error_msg)
+                        add_deployment_log('❌', error_msg)
+                        continue
+                        
+            except GitHubAPIError as e:
+                error_msg = f"Failed to create milestone '{milestone_name}': {str(e)}"
+                st.session_state.deployment_state['errors'].append(error_msg)
+                add_deployment_log('❌', error_msg)
+                continue
         
         # Deployment completed
         update_deployment_state(

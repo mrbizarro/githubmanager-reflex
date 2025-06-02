@@ -34,6 +34,13 @@ def render_cleanup_page():
         render_github_required_message()
         return
     
+    # Show repository info if connected
+    from config.settings import check_basic_config
+    config = check_basic_config()
+    if config['github_configured']:
+        st.markdown(f"**Repository**: `{config['repo_owner']}/{config['repo_name']}`")
+        st.markdown("---")
+    
     # Main cleanup interface
     render_cleanup_tabs()
 
@@ -62,22 +69,58 @@ def render_github_required_message():
     render_alert(
         type="error",
         title="GitHub Configuration Required",
-        description="Please configure your GitHub settings in the header to use cleanup features"
+        description="Please configure your GitHub settings to use cleanup features"
     )
+    
+    # Check what specifically is missing
+    from config.settings import check_basic_config
+    config = check_basic_config()
     
     st.markdown("""
     ### 🔧 Quick Setup
     
-    1. Click the ⚙️ **Settings** button in the header
-    2. Enter your GitHub Token (with `repo` scope)
-    3. Set Repository Owner and Name
-    4. Save settings and return here
+    1. Create a `.env` file in your project directory
+    2. Add your GitHub configuration:
+    
+    ```
+    GITHUB_TOKEN=your_github_personal_access_token
+    REPO_OWNER=your_username_or_organization
+    REPO_NAME=your_repository_name
+    ```
+    
+    3. Restart the application
     
     **Need a GitHub Token?**
     1. Go to [GitHub Settings → Developer settings → Personal access tokens](https://github.com/settings/tokens)
     2. Generate new token with `repo` scope
-    3. Copy and paste it in settings
+    3. Copy and paste it in your .env file
+    
+    **Current Configuration Status:**
     """)
+    
+    # Show current status
+    token_status = "✅ Configured" if config['github_token'] else "❌ Missing"
+    owner_status = "✅ Configured" if config['repo_owner'] else "❌ Missing"
+    repo_status = "✅ Configured" if config['repo_name'] else "❌ Missing"
+    
+    st.markdown(f"""
+    - **GitHub Token**: {token_status}
+    - **Repository Owner**: {owner_status}
+    - **Repository Name**: {repo_status}
+    """)
+    
+    # Test connection button if configured
+    if config['github_configured']:
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("🔗 Test Connection", key="test_github_connection"):
+                from config.settings import test_github_connection
+                success, message = test_github_connection()
+                if success:
+                    st.success(f"✅ {message}")
+                    st.rerun()  # Refresh to show issues
+                else:
+                    st.error(f"❌ {message}")
 
 def render_cleanup_tabs():
     """Render main cleanup tabs"""
@@ -641,104 +684,125 @@ def render_metric_card(title, value, icon):
 # Mock data functions (replace with real API calls)
 
 def load_repository_issues():
-    """Load issues from repository (mock implementation)"""
+    """Load issues from repository using GitHub API with pagination"""
     
     st.session_state['loading_issues'] = True
     
-    # Mock issues data
-    mock_issues = [
-        {
-            'number': 1,
-            'title': 'Fix authentication bug in login flow',
-            'body': 'Users are experiencing issues when logging in with special characters in passwords.',
-            'state': 'open',
-            'created_at': '2024-01-15',
-            'author': 'john_doe',
-            'labels': ['bug', 'authentication', 'high-priority'],
-            'assignees': ['jane_smith'],
-            'milestone': 'v1.2.0',
-            'url': 'https://github.com/owner/repo/issues/1'
-        },
-        {
-            'number': 2,
-            'title': 'Add dark mode support',
-            'body': 'Implement dark mode theme for better user experience.',
-            'state': 'open',
-            'created_at': '2024-01-10',
-            'author': 'jane_smith',
-            'labels': ['enhancement', 'ui', 'frontend'],
-            'assignees': [],
-            'milestone': 'v1.3.0',
-            'url': 'https://github.com/owner/repo/issues/2'
-        },
-        {
-            'number': 3,
-            'title': 'Update documentation for API endpoints',
-            'body': 'API documentation needs to be updated with new endpoints.',
-            'state': 'closed',
-            'created_at': '2024-01-05',
-            'author': 'bob_wilson',
-            'labels': ['documentation'],
-            'assignees': ['john_doe'],
-            'milestone': None,
-            'url': 'https://github.com/owner/repo/issues/3'
-        }
-    ]
-    
-    # Apply filters
-    filter_state = st.session_state.cleanup_state['filter_state']
-    if filter_state != 'all':
-        mock_issues = [issue for issue in mock_issues if issue['state'] == filter_state]
-    
-    st.session_state.cleanup_state['loaded_issues'] = mock_issues
-    st.session_state['loading_issues'] = False
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Get filter settings
+        filter_state = st.session_state.cleanup_state['filter_state']
+        sort_by = st.session_state.cleanup_state['sort_by']
+        sort_direction = st.session_state.cleanup_state['sort_direction']
+        
+        # Create a placeholder for loading progress
+        progress_placeholder = st.empty()
+        
+        def progress_callback(message):
+            progress_placeholder.info(f"🔄 {message}")
+        
+        # Load ALL issues with automatic pagination
+        raw_issues = api.get_all_issues(
+            state=filter_state,
+            sort=sort_by,
+            direction=sort_direction,
+            progress_callback=progress_callback
+        )
+        
+        # Process and format issues
+        all_issues = []
+        for issue in raw_issues:
+            formatted_issue = {
+                'number': issue['number'],
+                'title': issue['title'],
+                'body': issue.get('body', ''),
+                'state': issue['state'],
+                'created_at': issue['created_at'][:10],  # Just date part
+                'updated_at': issue['updated_at'][:10],
+                'author': issue['user']['login'],
+                'labels': [label['name'] for label in issue.get('labels', [])],
+                'assignees': [assignee['login'] for assignee in issue.get('assignees', [])],
+                'milestone': issue['milestone']['title'] if issue.get('milestone') else None,
+                'url': issue['html_url'],
+                'comments': issue.get('comments', 0)
+            }
+            all_issues.append(formatted_issue)
+        
+        # Clear progress placeholder
+        progress_placeholder.empty()
+        
+        # Store loaded issues
+        st.session_state.cleanup_state['loaded_issues'] = all_issues
+        st.session_state['loading_issues'] = False
+        
+        # Show success message
+        st.success(f"✅ Loaded {len(all_issues)} issues from repository")
+        
+    except GitHubAPIError as e:
+        st.session_state['loading_issues'] = False
+        st.error(f"❌ GitHub API Error: {str(e)}")
+        st.session_state.cleanup_state['loaded_issues'] = []
+        
+    except Exception as e:
+        st.session_state['loading_issues'] = False
+        st.error(f"❌ Unexpected error loading issues: {str(e)}")
+        st.session_state.cleanup_state['loaded_issues'] = []
     
     st.rerun()
 
 def load_repository_milestones():
-    """Load milestones from repository (mock implementation)"""
+    """Load milestones from repository using GitHub API"""
     
     st.session_state['loading_milestones'] = True
     
-    # Mock milestones data
-    mock_milestones = [
-        {
-            'title': 'v1.2.0 Release',
-            'description': 'Major feature release with authentication improvements',
-            'state': 'open',
-            'open_issues': 5,
-            'closed_issues': 12,
-            'due_date': '2024-03-01',
-            'created_at': '2024-01-01',
-            'updated_at': '2024-01-20',
-            'url': 'https://github.com/owner/repo/milestone/1'
-        },
-        {
-            'title': 'v1.3.0 Release',
-            'description': 'UI improvements and new features',
-            'state': 'open',
-            'open_issues': 8,
-            'closed_issues': 2,
-            'due_date': '2024-04-15',
-            'created_at': '2024-01-15',
-            'updated_at': '2024-01-22',
-            'url': 'https://github.com/owner/repo/milestone/2'
-        },
-        {
-            'title': 'v1.1.0 Release',
-            'description': 'Bug fixes and minor improvements',
-            'state': 'closed',
-            'open_issues': 0,
-            'closed_issues': 15,
-            'due_date': '2024-01-15',
-            'created_at': '2023-12-01',
-            'updated_at': '2024-01-16',
-            'url': 'https://github.com/owner/repo/milestone/3'
-        }
-    ]
-    
-    st.session_state.cleanup_state['loaded_milestones'] = mock_milestones
-    st.session_state['loading_milestones'] = False
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Load all milestones (open and closed)
+        raw_milestones = api.get_milestones(state="all")
+        
+        # Process and format milestones
+        formatted_milestones = []
+        for milestone in raw_milestones:
+            formatted_milestone = {
+                'number': milestone['number'],
+                'title': milestone['title'],
+                'description': milestone.get('description', ''),
+                'state': milestone['state'],
+                'open_issues': milestone.get('open_issues', 0),
+                'closed_issues': milestone.get('closed_issues', 0),
+                'due_date': milestone.get('due_on', '').split('T')[0] if milestone.get('due_on') else None,
+                'created_at': milestone['created_at'][:10],
+                'updated_at': milestone['updated_at'][:10],
+                'url': milestone['html_url']
+            }
+            formatted_milestones.append(formatted_milestone)
+        
+        # Store loaded milestones
+        st.session_state.cleanup_state['loaded_milestones'] = formatted_milestones
+        st.session_state['loading_milestones'] = False
+        
+        # Show success message
+        st.success(f"✅ Loaded {len(formatted_milestones)} milestones from repository")
+        
+    except GitHubAPIError as e:
+        st.session_state['loading_milestones'] = False
+        st.error(f"❌ GitHub API Error: {str(e)}")
+        st.session_state.cleanup_state['loaded_milestones'] = []
+        
+    except Exception as e:
+        st.session_state['loading_milestones'] = False
+        st.error(f"❌ Unexpected error loading milestones: {str(e)}")
+        st.session_state.cleanup_state['loaded_milestones'] = []
     
     st.rerun()
 
@@ -809,22 +873,88 @@ def perform_advanced_search(query):
     st.rerun()
 
 def close_selected_issues(issues, select_all):
-    """Close selected issues (mock implementation)"""
+    """Close selected issues using GitHub API"""
     
-    # In real implementation, this would call GitHub API to close issues
-    closed_count = len(issues) if select_all else sum(1 for i in range(len(issues)) if st.session_state.get(f'issue_select_{i}', False))
-    
-    st.success(f"Successfully closed {closed_count} issues")
-    
-    # Refresh issues list
-    load_repository_issues()
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Get selected issue numbers
+        selected_issues = []
+        if select_all:
+            selected_issues = [issue['number'] for issue in issues]
+        else:
+            for i in range(len(issues)):
+                if st.session_state.get(f'issue_select_{i}', False):
+                    selected_issues.append(issues[i]['number'])
+        
+        if not selected_issues:
+            st.warning("⚠️ No issues selected")
+            return
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Create progress placeholder
+        progress_placeholder = st.empty()
+        
+        def progress_callback(message):
+            progress_placeholder.info(f"🔄 {message}")
+        
+        # Close issues in bulk
+        successful, failed, errors = api.bulk_close_issues(
+            issue_numbers=selected_issues,
+            progress_callback=progress_callback
+        )
+        
+        # Clear progress placeholder
+        progress_placeholder.empty()
+        
+        # Show results
+        if successful > 0:
+            st.success(f"✅ Successfully closed {successful} issues")
+        
+        if failed > 0:
+            st.error(f"❌ Failed to close {failed} issues")
+            with st.expander("View errors", expanded=False):
+                for error in errors:
+                    st.text(error)
+        
+        # Refresh issues list
+        load_repository_issues()
+        
+    except GitHubAPIError as e:
+        st.error(f"❌ GitHub API Error: {str(e)}")
+        
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {str(e)}")
 
 def delete_milestone(milestone):
-    """Delete milestone (mock implementation)"""
+    """Delete milestone using GitHub API"""
     
-    # In real implementation, this would call GitHub API to delete milestone
-    milestones = st.session_state.cleanup_state['loaded_milestones']
-    st.session_state.cleanup_state['loaded_milestones'] = [m for m in milestones if m['title'] != milestone['title']]
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Delete milestone
+        success = api.delete_milestone(milestone['number'])
+        
+        if success:
+            st.success(f"✅ Successfully deleted milestone: {milestone['title']}")
+            # Remove from local state
+            milestones = st.session_state.cleanup_state['loaded_milestones']
+            st.session_state.cleanup_state['loaded_milestones'] = [m for m in milestones if m['number'] != milestone['number']]
+        else:
+            st.error(f"❌ Failed to delete milestone: {milestone['title']}")
+        
+    except GitHubAPIError as e:
+        st.error(f"❌ GitHub API Error: {str(e)}")
+        
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {str(e)}")
 
 def delete_suggested_labels(labels):
     """Delete suggested labels (mock implementation)"""
