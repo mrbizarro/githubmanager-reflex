@@ -942,7 +942,7 @@ def simulate_standard_parsing(content, filename):
         return {}
 
 def start_deployment():
-    """Start GitHub deployment process"""
+    """Start GitHub deployment process with automatic label setup"""
     
     projects = st.session_state.get('processed_projects', {})
     if not projects:
@@ -961,6 +961,20 @@ def start_deployment():
     )
     
     add_deployment_log('ℹ️', 'Deployment started')
+    
+    # Automatically set up modern labels first
+    add_deployment_log('🎨', 'Setting up modern label system...')
+    try:
+        from github_api import setup_modern_labels
+        label_results = setup_modern_labels()
+        
+        if label_results['errors']:
+            add_deployment_log('⚠️', f"Label setup completed with {len(label_results['errors'])} errors")
+        else:
+            add_deployment_log('✅', f"Label setup completed: {label_results['created']} created, {label_results['updated']} updated")
+    except Exception as e:
+        add_deployment_log('❌', f"Label setup failed: {str(e)}")
+        # Continue with deployment even if label setup fails
     
     # Simulate deployment process
     simulate_github_deployment(projects)

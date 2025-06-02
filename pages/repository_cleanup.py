@@ -480,6 +480,31 @@ def render_labels_tab():
     
     st.markdown("### 🏷️ Label Cleanup & Management")
     
+    # Modern label setup section
+    st.markdown("#### 🎨 Modern Label System Setup")
+    
+    render_alert(
+        type="info",
+        title="Automatic Label Setup",
+        description="Set up modern colored labels with priority system for better issue organization"
+    )
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        if st.button("🎨 Setup Modern Labels", type="primary", use_container_width=True):
+            setup_modern_labels_ui()
+    
+    with col2:
+        if st.button("🔄 Preview Label System", use_container_width=True):
+            preview_modern_labels()
+    
+    # Show preview if requested
+    if st.session_state.get('show_label_preview', False):
+        render_label_preview()
+    
+    st.markdown("---")
+    
     # Analyze labels section
     col1, col2 = st.columns([1, 1])
     
@@ -955,6 +980,110 @@ def delete_milestone(milestone):
         
     except Exception as e:
         st.error(f"❌ Unexpected error: {str(e)}")
+
+def setup_modern_labels_ui():
+    """Set up modern labels through UI"""
+    
+    try:
+        from github_api import setup_modern_labels
+        
+        # Show progress
+        with st.spinner('🎨 Setting up modern label system...'):
+            results = setup_modern_labels()
+        
+        # Show results
+        if results['errors']:
+            st.warning(f"⚠️ Label setup completed with {len(results['errors'])} errors")
+            with st.expander("View Errors", expanded=False):
+                for error in results['errors']:
+                    st.error(error)
+        else:
+            st.success(f"✅ Label setup successful!")
+        
+        # Show summary
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Created", results['created'])
+        
+        with col2:
+            st.metric("Updated", results['updated'])
+        
+        with col3:
+            st.metric("Total", results['total'])
+        
+        render_alert(
+            type="success",
+            title="Modern Labels Ready!",
+            description="Your repository now has a professional colored label system. Process new issues to see them in action."
+        )
+        
+    except Exception as e:
+        st.error(f"❌ Failed to setup labels: {str(e)}")
+        
+        # Show manual setup option
+        render_alert(
+            type="warning",
+            title="Manual Setup Available",
+            description="You can also run 'python fix_label_colors.py' in your project directory."
+        )
+
+def preview_modern_labels():
+    """Preview the modern label system"""
+    
+    st.session_state['show_label_preview'] = not st.session_state.get('show_label_preview', False)
+    st.rerun()
+
+def render_label_preview():
+    """Render preview of modern label system"""
+    
+    st.markdown("#### 👀 Modern Label System Preview")
+    
+    # Priority labels
+    st.markdown("**Priority Labels:**")
+    priority_html = """
+    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap;">
+        <span class="modern-badge" style="background-color: #B60205; color: white;">🚨 priority-critical</span>
+        <span class="modern-badge" style="background-color: #D93F0B; color: white;">⚡ priority-high</span>
+        <span class="modern-badge" style="background-color: #FBCA04; color: black;">📋 priority-medium</span>
+        <span class="modern-badge" style="background-color: #0E8A16; color: white;">📝 priority-low</span>
+    </div>
+    """
+    st.markdown(priority_html, unsafe_allow_html=True)
+    
+    # Area labels
+    st.markdown("**Area Labels:**")
+    area_html = """
+    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap;">
+        <span class="modern-badge" style="background-color: #FF7F0E; color: white;">backend</span>
+        <span class="modern-badge" style="background-color: #1F77B4; color: white;">frontend</span>
+        <span class="modern-badge" style="background-color: #2CA02C; color: white;">database</span>
+        <span class="modern-badge" style="background-color: #D73A4A; color: white;">security</span>
+        <span class="modern-badge" style="background-color: #6A1B9A; color: white;">privacy</span>
+        <span class="modern-badge" style="background-color: #E91E63; color: white;">user-experience</span>
+    </div>
+    """
+    st.markdown(area_html, unsafe_allow_html=True)
+    
+    # Type labels
+    st.markdown("**Type Labels:**")
+    type_html = """
+    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap;">
+        <span class="modern-badge" style="background-color: #A2EEEF; color: black;">enhancement</span>
+        <span class="modern-badge" style="background-color: #D73A4A; color: white;">bug</span>
+        <span class="modern-badge" style="background-color: #7057FF; color: white;">maintenance</span>
+        <span class="modern-badge" style="background-color: #0075CA; color: white;">documentation</span>
+    </div>
+    """
+    st.markdown(type_html, unsafe_allow_html=True)
+    
+    st.markdown("""
+    **Benefits:**
+    - 🎨 **Visual Priority** - Instantly see what needs attention
+    - 📊 **Better Organization** - Filter and sort by priority/area
+    - 👥 **Team Clarity** - Everyone knows what to work on first
+    - 💼 **Professional Appearance** - Looks organized and maintained
+    """)
 
 def delete_suggested_labels(labels):
     """Delete suggested labels (mock implementation)"""

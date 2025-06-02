@@ -548,6 +548,154 @@ def create_label(
     
     return _post(url, json=data)
 
+def update_or_create_label(
+    name: str,
+    color: str = "ededed",
+    description: Optional[str] = None,
+    dry_run: bool = False
+) -> Optional[Dict[str, Any]]:
+    """
+    Update an existing label or create a new one if it doesn't exist.
+    
+    Args:
+        name: The label name
+        color: The label color (6 character hex code without #)
+        description: Optional label description
+        dry_run: If True, simulate the API call without making it
+        
+    Returns:
+        Label data, or None for dry runs
+        
+    Raises:
+        GitHubError: If the API call fails or configuration is missing
+        RepositoryError: If repository doesn't exist or is inaccessible
+        PermissionError: If user doesn't have required permissions
+    """
+    if dry_run:
+        return None
+        
+    validate_github_config()
+    
+    # Verify repository access
+    access_ok, message, _ = verify_repository_access()
+    if not access_ok:
+        raise RepositoryError(message)
+    
+    # Remove # from color if present
+    color = color.lstrip('#')
+    
+    # First, try to update existing label
+    update_url = f"https://api.github.com/repos/{OWNER}/{REPO}/labels/{name}"
+    update_data = {
+        "name": name,
+        "color": color
+    }
+    
+    if description:
+        update_data["description"] = description
+    
+    try:
+        response = _patch(update_url, json=update_data)
+        return response
+    except GitHubError:
+        # If update failed, try to create new label
+        try:
+            return create_label(name, color, description, dry_run)
+        except GitHubError as e:
+            # If both failed, it might already exist with different name encoding
+            if "422" in str(e):  # Validation failed, likely already exists
+                return None
+            raise
+
+def setup_modern_labels(dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Set up modern colored label system for the repository.
+    
+    Args:
+        dry_run: If True, simulate the API calls without making them
+        
+    Returns:
+        Dictionary with setup results
+        
+    Raises:
+        GitHubError: If the API calls fail or configuration is missing
+        RepositoryError: If repository doesn't exist or is inaccessible
+        PermissionError: If user doesn't have required permissions
+    """
+    if dry_run:
+        return {"created": 0, "updated": 0, "skipped": 0, "errors": []}
+    
+    validate_github_config()
+    
+    # Modern label system
+    modern_labels = [
+        # Priority labels with emojis
+        ("🚨 priority-critical", "B60205", "Critical issues requiring immediate attention"),
+        ("⚡ priority-high", "D93F0B", "High priority issues"),
+        ("📋 priority-medium", "FBCA04", "Medium priority issues"),
+        ("📝 priority-low", "0E8A16", "Low priority issues"),
+        
+        # Area labels (based on existing issues)
+        ("backend", "FF7F0E", "Backend/API related"),
+        ("frontend", "1F77B4", "Frontend/UI related"), 
+        ("database", "2CA02C", "Database related"),
+        ("security", "D73A4A", "Security issues"),
+        ("privacy", "6A1B9A", "Privacy related"),
+        ("user-experience", "E91E63", "UX improvements"),
+        ("documentation", "0075CA", "Documentation"),
+        ("requirements", "795548", "Requirements"),
+        ("workflow", "607D8B", "Workflow improvements"),
+        ("testing", "D62728", "Testing related"),
+        
+        # Type labels
+        ("enhancement", "A2EEEF", "New features and improvements"),
+        ("bug", "D73A4A", "Something isn't working"),
+        ("maintenance", "7057FF", "Code maintenance and cleanup"),
+        
+        # Status labels
+        ("good-first-issue", "7057FF", "Good for newcomers"),
+        ("help-wanted", "008672", "Extra attention is needed"),
+        ("wontfix", "FFFFFF", "This will not be worked on")
+    ]
+    
+    results = {
+        "created": 0,
+        "updated": 0, 
+        "skipped": 0,
+        "errors": [],
+        "total": len(modern_labels)
+    }
+    
+    print(f"🎨 Setting up {len(modern_labels)} modern labels...")
+    
+    for name, color, description in modern_labels:
+        try:
+            result = update_or_create_label(name, color, description, dry_run)
+            if result:
+                if "created_at" in result:  # New label
+                    results["created"] += 1
+                    print(f"✅ Created: {name}")
+                else:  # Updated label
+                    results["updated"] += 1
+                    print(f"✅ Updated: {name}")
+            else:
+                results["skipped"] += 1
+                print(f"⚠️  Skipped: {name}")
+                
+        except Exception as e:
+            error_msg = f"Failed to create/update {name}: {str(e)}"
+            results["errors"].append(error_msg)
+            print(f"❌ {error_msg}")
+    
+    print(f"
+🎉 Label setup complete!")
+    print(f"   Created: {results['created']}")
+    print(f"   Updated: {results['updated']}")
+    print(f"   Skipped: {results['skipped']}")
+    print(f"   Errors: {len(results['errors'])}")
+    
+    return results
+
 def ensure_labels_exist(labels: List[str], dry_run: bool = False) -> None:
     """
     Ensure all specified labels exist in the repository.

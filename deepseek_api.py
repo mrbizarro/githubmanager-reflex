@@ -47,12 +47,12 @@ def quick_detect_content_type(content: str) -> str:
 
 @lru_cache(maxsize=8)
 def get_core_labels(content_type: str) -> str:
-    """Minimal label set - reduces prompt tokens by 80%"""
+    """Modern label set with colored priority system"""
     label_sets = {
-        'technical_project': "frontend, backend, database, testing, deployment, documentation, enhancement, high-priority",
-        'business_requirements': "feature, user-experience, workflow, requirements, documentation, enhancement, high-priority",
+        'technical_project': "🚨 priority-critical, ⚡ priority-high, 📋 priority-medium, backend, frontend, database, security, enhancement, documentation",
+        'business_requirements': "📋 priority-medium, 📝 priority-low, user-experience, requirements, documentation, enhancement, workflow",
     }
-    return label_sets.get(content_type, "frontend, backend, enhancement, documentation, high-priority")
+    return label_sets.get(content_type, "📋 priority-medium, backend, frontend, enhancement, documentation")
 
 def estimate_issue_count(content: str) -> str:
     """Quick issue count estimation"""
@@ -110,11 +110,12 @@ def create_optimized_prompt(markdown_content: str, content_type: str = "auto") -
 
 🎯 STRICT RULES:
 - ONE milestone with descriptive name (4 words max) based on actual content
-- Analyze content to create smart milestone name like "🚨 Architecture Cleanup" or "⚡ API Refactoring"
+- Analyze content to create smart milestone name like "🚨 Critical Fixes" or "⚡ API Refactoring"
 - ONLY use explicit content - no inference/assumptions  
 - Group related tasks into 2-8 hour work sessions
 - Add priority emojis to issue titles (🚨⚡📋📝)
 - Labels: {core_labels}
+- Description should explain the milestone PURPOSE, not repeat the name
 
 📐 OUTPUT: JSON with "reasoning" and "structure"
 
@@ -130,13 +131,13 @@ Format:
 {{
   "reasoning": "Brief analysis of content and milestone naming decision",
   "structure": {{
-    "🚨 Architecture Cleanup": {{
-      "description": "Brief project description from content",
+    "🚨 Critical Fixes": {{
+      "description": "Resolve urgent bugs and stability issues identified in the codebase",
       "issues": [
-        {{
+        {{  
           "title": "🚨 [Area] Task name",
           "body": "What to build based on markdown",
-          "labels": ["priority-critical", "area-backend"],
+          "labels": ["🚨 priority-critical", "backend"],
           "assignees": []
         }}
       ]

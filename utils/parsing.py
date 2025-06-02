@@ -309,7 +309,7 @@ def parse_fallback_structure(content: str, filename: str = "") -> Tuple[str, Dic
                 {
                     'title': '📋 Review and organize project structure',
                     'body': 'The uploaded markdown did not follow standard format. Please review and organize the content into proper issues.',
-                    'labels': ['priority-medium', 'type-documentation', 'area-backend'],
+                    'labels': ['📋 priority-medium', 'documentation', 'backend'],
                     'assignees': []
                 }
             ]
@@ -430,14 +430,24 @@ def extract_description(content: str) -> str:
     return description or "No description provided"
 
 def extract_labels_from_content(content: str, title: str) -> List[str]:
-    """Extract contextual labels from content and title"""
+    """Extract contextual labels from content and title with new priority system"""
     
     labels = []
     content_lower = (content + " " + title).lower()
     
-    # Technical labels
+    # Priority labels (most important first)
+    if any(word in content_lower for word in ['critical', 'urgent', 'emergency', 'breaking', 'security', 'vulnerability']):
+        labels.append('🚨 priority-critical')
+    elif any(word in content_lower for word in ['important', 'major', 'significant', 'blocking']):
+        labels.append('⚡ priority-high')
+    elif any(word in content_lower for word in ['minor', 'small', 'documentation', 'readme']):
+        labels.append('📝 priority-low')
+    else:
+        labels.append('📋 priority-medium')
+    
+    # Technical area labels
     if any(word in content_lower for word in ['api', 'endpoint', 'rest', 'graphql']):
-        labels.append('api')
+        labels.append('backend')
     
     if any(word in content_lower for word in ['database', 'db', 'sql', 'query']):
         labels.append('database')
@@ -445,17 +455,29 @@ def extract_labels_from_content(content: str, title: str) -> List[str]:
     if any(word in content_lower for word in ['frontend', 'ui', 'interface', 'component']):
         labels.append('frontend')
     
-    if any(word in content_lower for word in ['backend', 'server', 'service']):
+    if any(word in content_lower for word in ['backend', 'server', 'service']) and 'backend' not in labels:
         labels.append('backend')
     
     if any(word in content_lower for word in ['auth', 'login', 'authentication', 'security']):
-        labels.append('authentication')
+        labels.append('security')
     
     if any(word in content_lower for word in ['test', 'testing', 'spec', 'unit']):
         labels.append('testing')
     
     if any(word in content_lower for word in ['doc', 'documentation', 'readme']):
         labels.append('documentation')
+    
+    if any(word in content_lower for word in ['privacy', 'data', 'user data']):
+        labels.append('privacy')
+    
+    if any(word in content_lower for word in ['user', 'experience', 'ux', 'usability']):
+        labels.append('user-experience')
+    
+    if any(word in content_lower for word in ['requirement', 'requirements', 'spec', 'specification']):
+        labels.append('requirements')
+    
+    if any(word in content_lower for word in ['workflow', 'process', 'procedure']):
+        labels.append('workflow')
     
     # Type labels
     if any(word in content_lower for word in ['bug', 'fix', 'error', 'issue']):
@@ -467,13 +489,15 @@ def extract_labels_from_content(content: str, title: str) -> List[str]:
     if any(word in content_lower for word in ['setup', 'install', 'configure', 'init']):
         labels.append('setup')
     
-    # Priority labels
-    if any(word in content_lower for word in ['urgent', 'critical', 'important', 'asap']):
-        labels.append('high-priority')
+    # Ensure we have at least one area label
+    area_labels = ['backend', 'frontend', 'database', 'security', 'privacy', 'user-experience', 'requirements', 'workflow', 'testing', 'documentation']
+    if not any(label in labels for label in area_labels):
+        labels.append('backend')  # Default area
     
-    # Default label if none found
-    if not labels:
-        labels.append('task')
+    # Ensure we have enhancement if no type specified
+    type_labels = ['bug', 'enhancement', 'setup']
+    if not any(label in labels for label in type_labels):
+        labels.append('enhancement')
     
     return labels
 
