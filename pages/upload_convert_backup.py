@@ -2,7 +2,6 @@
 Upload & Convert page - main file processing functionality
 With async processing for improved performance
 THREAD-SAFE VERSION - No session state access in background threads
-FIXED: Real-time deployment progress with proper UI updates
 """
 
 import streamlit as st
@@ -22,18 +21,14 @@ from utils.session import (
 from components.status import render_quick_stats
 from config.settings import get_config
 
-# Thread-safe queues for communication between background threads and main thread
+# Thread-safe queue for communication between background thread and main thread
 processing_queue = queue.Queue()
-deployment_queue = queue.Queue()
 
 def render_upload_page():
     """Render the upload and convert page"""
     
     # Check for updates from background processing
     process_background_updates()
-    
-    # Check for updates from background deployment
-    process_deployment_updates()
     
     # Quick stats if we have processed projects
     if st.session_state.get('processed_projects'):
@@ -43,11 +38,6 @@ def render_upload_page():
     # Check if async processing is active
     if st.session_state.get('async_processing', False):
         render_async_processing_status()
-        return
-    
-    # Check if deployment is running
-    if st.session_state.get('deployment_running', False):
-        render_deployment_status_live()
         return
     
     # Upload section
@@ -89,123 +79,6 @@ def process_background_updates():
                 st.session_state.processing_total_time = update['total_time']
     except queue.Empty:
         pass
-
-def process_deployment_updates():
-    """Process updates from background deployment thread"""
-    try:
-        while not deployment_queue.empty():
-            update = deployment_queue.get_nowait()
-            if update['type'] == 'progress':
-                update_deployment_state(
-                    progress=update['progress'],
-                    current_action=update['action']
-                )
-            elif update['type'] == 'log':
-                add_deployment_log(update['icon'], update['message'])
-            elif update['type'] == 'milestone_created':
-                st.session_state.deployment_state['created_milestones'] += 1
-            elif update['type'] == 'issue_created':
-                st.session_state.deployment_state['created_issues'] += 1
-            elif update['type'] == 'error':
-                st.session_state.deployment_state['errors'].append(update['error'])
-                add_deployment_log('❌', update['error'])
-            elif update['type'] == 'complete':
-                update_deployment_state(
-                    status='completed',
-                    progress=100,
-                    current_action='',
-                    end_time=datetime.now()
-                )
-                st.session_state.deployment_running = False
-                add_deployment_log('✅', update['message'])
-            elif update['type'] == 'failed':
-                update_deployment_state(
-                    status='error',
-                    end_time=datetime.now()
-                )
-                st.session_state.deployment_running = False
-                add_deployment_log('❌', update['error'])
-    except queue.Empty:
-        pass
-
-def render_deployment_status_live():
-    """Render live deployment status with real-time updates"""
-    
-    st.markdown("### 🚀 Deployment in Progress")
-    
-    deployment_state = st.session_state.get('deployment_state', {})
-    progress = deployment_state.get('progress', 0)
-    current_action = deployment_state.get('current_action', 'Initializing...')
-    
-    # Progress bar with current action
-    st.progress(progress / 100, text=f"{current_action} ({progress}%)")
-    
-    # Metrics row
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Progress", f"{progress}%")
-    
-    with col2:
-        st.metric("Milestones Created", deployment_state.get('created_milestones', 0))
-    
-    with col3:
-        st.metric("Issues Created", deployment_state.get('created_issues', 0))
-    
-    with col4:
-        st.metric("Errors", len(deployment_state.get('errors', [])))
-    
-    # Live deployment log
-    if deployment_state.get('logs'):
-        st.markdown("#### 📜 Live Deployment Log")
-        
-        # Show last 10 entries in real-time
-        recent_logs = deployment_state['logs'][-10:]
-        
-        log_container = st.container()
-        with log_container:
-            log_html = '<div style="background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 15px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.85rem;">'
-            
-            for log_entry in recent_logs:
-                icon = log_entry.get('icon', 'ℹ️')
-                message = log_entry.get('message', '')
-                timestamp = log_entry.get('timestamp', '')
-                
-                log_html += f"""
-                <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; color: #e2e8f0;">
-                    <span>{icon}</span>
-                    <span style="flex: 1;">{message}</span>
-                    <span style="color: #64748b; font-size: 0.75rem;">{timestamp}</span>
-                </div>
-                """
-            
-            log_html += '</div>'
-            st.markdown(log_html, unsafe_allow_html=True)
-    
-    # Show errors if any
-    errors = deployment_state.get('errors', [])
-    if errors:
-        st.markdown("#### ⚠️ Deployment Errors")
-        for i, error in enumerate(errors[-3:], 1):  # Show last 3 errors
-            st.error(f"Error {i}: {error}")
-    
-    # Auto-refresh every 1 second during deployment
-    if st.session_state.get('deployment_running', False):
-        time.sleep(1.0)
-        st.rerun()
-    else:
-        # Deployment completed
-        deployment_state = st.session_state.get('deployment_state', {})
-        if deployment_state.get('status') == 'completed':
-            st.success("🚀 Deployment completed successfully!")
-            st.balloons()
-        elif deployment_state.get('status') == 'error':
-            st.error("❌ Deployment failed!")
-        
-        # Show final results
-        if st.button("🔄 View Results", use_container_width=True):
-            st.session_state.deployment_running = False
-            st.rerun()
 
 def render_upload_section():
     """Render file upload section with modern design"""
@@ -305,12 +178,11 @@ def render_upload_section():
             st.session_state.processed_projects = None
             st.session_state.async_processing = False
             st.session_state.processing_errors = []
-            st.session_state.deployment_running = False
             reset_deployment_state()
             st.rerun()
     
     with col2:
-        process_disabled = not st.session_state.get('uploaded_files') or st.session_state.get('async_processing', False) or st.session_state.get('deployment_running', False)
+        process_disabled = not st.session_state.get('uploaded_files') or st.session_state.get('async_processing', False)
         
         if st.button(
             "⚡ Process Files", 
@@ -677,7 +549,7 @@ def render_results_section():
     
     with col3:
         github_ok = get_config('github_connected', False)
-        deploy_disabled = not github_ok or st.session_state.get('deployment_running', False)
+        deploy_disabled = not github_ok or st.session_state.get('deployment_state', {}).get('status') == 'running'
         
         if st.button(
             "🚀 Deploy to GitHub",
@@ -820,7 +692,6 @@ def render_deployment_section():
     if status in ['completed', 'error']:
         if st.button("🔄 Reset Deployment", key="reset_deployment"):
             reset_deployment_state()
-            st.session_state.deployment_running = False
             st.rerun()
 
 def render_deployment_status(deployment_state):
@@ -983,7 +854,7 @@ def simulate_ai_parsing(content, filename):
         raise Exception(error_msg)
 
 def start_deployment():
-    """Start GitHub deployment process with real-time progress updates"""
+    """Start GitHub deployment process with automatic label setup"""
     
     projects = st.session_state.get('processed_projects', {})
     if not projects:
@@ -1003,99 +874,37 @@ def start_deployment():
     
     add_deployment_log('ℹ️', 'Deployment started')
     
-    # Start async deployment with real-time updates
-    st.session_state.deployment_running = True
+    # Automatically set up modern labels first
+    add_deployment_log('🎨', 'Setting up modern label system...')
+    try:
+        from github_api import setup_modern_labels
+        label_results = setup_modern_labels()
+        
+        if label_results['errors']:
+            add_deployment_log('⚠️', f"Label setup completed with {len(label_results['errors'])} errors")
+        else:
+            add_deployment_log('✅', f"Label setup completed: {label_results['created']} created, {label_results['updated']} updated")
+    except Exception as e:
+        add_deployment_log('❌', f"Label setup failed: {str(e)}")
+        # Continue with deployment even if label setup fails
     
-    # Clear the deployment queue
-    while not deployment_queue.empty():
-        try:
-            deployment_queue.get_nowait()
-        except queue.Empty:
-            break
-    
-    # Start background deployment thread
-    threading.Thread(
-        target=background_deployment_process,
-        args=(projects,),
-        daemon=True
-    ).start()
-    
-    # Force UI refresh
-    st.rerun()
+    # Simulate deployment process
+    simulate_github_deployment(projects)
 
-def background_deployment_process(projects):
-    """
-    COMPLETELY THREAD-SAFE background deployment
-    NO access to st.session_state - only queue communication
-    """
+def simulate_github_deployment(projects):
+    """Use real GitHub API for deployment"""
     
-    start_time = time.time()
+    total_milestones = len(projects)
+    total_issues = sum(len(m.get('issues', [])) for m in projects.values())
+    total_steps = total_milestones + total_issues
+    current_step = 0
     
     try:
-        # Calculate total steps
-        total_milestones = len(projects)
-        total_issues = sum(len(m.get('issues', [])) for m in projects.values())
-        total_steps = total_milestones + total_issues + 1  # +1 for label setup
-        current_step = 0
+        # Import real GitHub API functions
+        from utils.github_api import GitHubAPI, GitHubAPIError
         
-        print(f"🚀 Starting background deployment: {total_milestones} milestones, {total_issues} issues")
-        
-        # Step 1: Set up labels
-        current_step += 1
-        progress = int((current_step / total_steps) * 100)
-        
-        deployment_queue.put({
-            'type': 'progress',
-            'progress': progress,
-            'action': 'Setting up modern label system...'
-        })
-        
-        deployment_queue.put({
-            'type': 'log',
-            'icon': '🎨',
-            'message': 'Setting up modern label system...'
-        })
-        
-        try:
-            # Import label setup function
-            import sys
-            import os
-            
-            # Add the main directory to path
-            main_dir = os.path.dirname(os.path.dirname(__file__))
-            if main_dir not in sys.path:
-                sys.path.insert(0, main_dir)
-            
-            from github_api import setup_modern_labels
-            label_results = setup_modern_labels()
-            
-            if label_results['errors']:
-                deployment_queue.put({
-                    'type': 'log',
-                    'icon': '⚠️',
-                    'message': f"Label setup completed with {len(label_results['errors'])} errors"
-                })
-            else:
-                deployment_queue.put({
-                    'type': 'log',
-                    'icon': '✅',
-                    'message': f"Label setup completed: {label_results['created']} created, {label_results['updated']} updated"
-                })
-        except Exception as e:
-            deployment_queue.put({
-                'type': 'log',
-                'icon': '❌',
-                'message': f"Label setup failed: {str(e)}"
-            })
-        
-        # Import GitHub API functions
-        try:
-            from utils.github_api import GitHubAPI, GitHubAPIError
-            api = GitHubAPI()
-        except ImportError:
-            # Fallback - try different import path
-            from github_api import GitHubAPI, GitHubAPIError
-            api = GitHubAPI()
+        # Initialize GitHub API
+        api = GitHubAPI()
         
         # Process each milestone and its issues
         for milestone_name, milestone_data in projects.items():
@@ -1103,17 +912,12 @@ def background_deployment_process(projects):
             progress = int((current_step / total_steps) * 100)
             
             # Update progress
-            deployment_queue.put({
-                'type': 'progress',
-                'progress': progress,
-                'action': f"Creating milestone: {milestone_name}"
-            })
+            update_deployment_state(
+                progress=progress,
+                current_action=f"Creating milestone: {milestone_name}"
+            )
             
-            deployment_queue.put({
-                'type': 'log',
-                'icon': '🎯',
-                'message': f'Creating milestone: {milestone_name}'
-            })
+            add_deployment_log('🎯', f'Creating milestone: {milestone_name}')
             
             # Create milestone using real API
             try:
@@ -1130,13 +934,8 @@ def background_deployment_process(projects):
                 time.sleep(0.5)
                 
                 # Update milestone count
-                deployment_queue.put({'type': 'milestone_created'})
-                
-                deployment_queue.put({
-                    'type': 'log',
-                    'icon': '✅',
-                    'message': f'Created milestone #{milestone_number}: {milestone_name}'
-                })
+                update_deployment_state(created_milestones=st.session_state.deployment_state['created_milestones'] + 1)
+                add_deployment_log('✅', f'Created milestone #{milestone_number}: {milestone_name}')
                 
                 # Process issues for this milestone
                 for issue_index, issue in enumerate(milestone_data.get('issues', [])):
@@ -1146,17 +945,12 @@ def background_deployment_process(projects):
                     issue_title = issue.get('title', f'Issue {issue_index + 1}')
                     short_title = issue_title[:40] + '...' if len(issue_title) > 40 else issue_title
                     
-                    deployment_queue.put({
-                        'type': 'progress',
-                        'progress': progress,
-                        'action': f"Creating issue: {short_title}"
-                    })
+                    update_deployment_state(
+                        progress=progress,
+                        current_action=f"Creating issue: {short_title}"
+                    )
                     
-                    deployment_queue.put({
-                        'type': 'log',
-                        'icon': '📋',
-                        'message': f'Creating issue: {short_title}'
-                    })
+                    add_deployment_log('📋', f'Creating issue: {short_title}')
                     
                     # Create issue using real API
                     try:
@@ -1174,54 +968,44 @@ def background_deployment_process(projects):
                         time.sleep(0.5)
                         
                         # Update issue count
-                        deployment_queue.put({'type': 'issue_created'})
+                        update_deployment_state(created_issues=st.session_state.deployment_state['created_issues'] + 1)
+                        add_deployment_log('✅', f'Created issue #{issue_number}: {short_title}')
                         
-                        deployment_queue.put({
-                            'type': 'log',
-                            'icon': '✅',
-                            'message': f'Created issue #{issue_number}: {short_title}'
-                        })
-                        
-                    except Exception as e:
+                    except GitHubAPIError as e:
                         error_msg = f"Failed to create issue '{issue_title}': {str(e)}"
-                        deployment_queue.put({
-                            'type': 'error',
-                            'error': error_msg
-                        })
-                        print(f"❌ {error_msg}")
+                        st.session_state.deployment_state['errors'].append(error_msg)
+                        add_deployment_log('❌', error_msg)
                         continue
                         
-            except Exception as e:
+            except GitHubAPIError as e:
                 error_msg = f"Failed to create milestone '{milestone_name}': {str(e)}"
-                deployment_queue.put({
-                    'type': 'error',
-                    'error': error_msg
-                })
-                print(f"❌ {error_msg}")
+                st.session_state.deployment_state['errors'].append(error_msg)
+                add_deployment_log('❌', error_msg)
                 continue
         
         # Deployment completed
-        total_time = time.time() - start_time
+        update_deployment_state(
+            status='completed',
+            progress=100,
+            current_action='',
+            end_time=datetime.now()
+        )
         
-        deployment_queue.put({
-            'type': 'complete',
-            'message': f"Deployment completed in {total_time:.2f}s!"
-        })
+        completion_msg = f"Deployment completed! Created {st.session_state.deployment_state['created_milestones']} milestones and {st.session_state.deployment_state['created_issues']} issues"
+        add_deployment_log('✅', completion_msg)
         
-        print(f"⚡ Background deployment completed in {total_time:.2f}s")
+        st.success("🚀 Deployment completed successfully!")
+        st.rerun()
         
     except Exception as e:
-        # Handle any other errors
-        error_msg = f"Deployment failed: {str(e)}"
-        print(f"💥 {error_msg}")
+        update_deployment_state(
+            status='error',
+            end_time=datetime.now()
+        )
         
-        deployment_queue.put({
-            'type': 'failed',
-            'error': error_msg
-        })
-
-# Legacy deployment function for compatibility
-def simulate_github_deployment(projects):
-    """Legacy deployment function - redirects to new async deployment"""
-    print("⚠️ Using legacy deployment function - redirecting to async deployment")
-    background_deployment_process(projects)
+        error_msg = f"Deployment failed: {str(e)}"
+        st.session_state.deployment_state['errors'].append(error_msg)
+        add_deployment_log('❌', error_msg)
+        
+        st.error(f"❌ Deployment failed: {str(e)}")
+        st.rerun()
