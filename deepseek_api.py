@@ -31,6 +31,7 @@ def validate_deepseek_config() -> None:
 def create_master_prompt(markdown_content: str) -> str:
     """
     Create the master prompt for DeepSeek to analyze markdown and convert to GitHub structure.
+    Uses the single milestone + labels approach for better organization.
     
     Args:
         markdown_content: The markdown content to analyze
@@ -38,46 +39,50 @@ def create_master_prompt(markdown_content: str) -> str:
     Returns:
         Formatted prompt for DeepSeek
     """
-    return f"""You are an expert project manager and GitHub workflow specialist. Your task is to analyze the provided markdown content and intelligently convert it into a structured format suitable for GitHub milestones and issues.
+    return f"""You are an expert project manager and GitHub workflow specialist. Your task is to analyze the provided markdown content and convert it into a well-organized GitHub project structure.
 
-ANALYSIS REQUIREMENTS:
-1. Identify logical project milestones from the content
-2. Extract or create meaningful issues within each milestone
-3. Suggest appropriate labels based on content context
-4. Recommend assignees if mentioned in the content
-5. Provide clear reasoning for your decisions
+🎯 ORGANIZATION STRATEGY:
+Instead of creating multiple separate milestones, you should:
+1. Create ONE main milestone that represents the overall project/phase
+2. Use LABELS to categorize different work streams within that milestone
+3. This makes filtering and project management much easier
+
+📋 STANDARD LABELS TO USE:
+- 🧪 testing-qa (Testing & Quality Assurance)
+- 🗄️ database-migration (Database & Migration Strategy)
+- ⚡ code-quality (Code Quality & Optimization)
+- 🔍 feature-analysis (Core Feature Analysis)
+- 🛠️ tech-stack (Technology Stack Assessment)
+- 📚 documentation (Documentation & Guides)
+- 🐛 bug (Bug fixes and issues)
+- ✨ enhancement (New features and improvements)
+- 🚀 deployment (Deployment and DevOps)
+- 🔒 security (Security-related tasks)
 
 OUTPUT FORMAT:
 You must respond with a JSON object containing:
 1. "reasoning" - Your step-by-step analysis and decision-making process
-2. "structure" - The organized milestone and issue structure
+2. "structure" - The organized milestone and issue structure (SINGLE MILESTONE)
 
 The structure should follow this exact format:
 {{
-  "reasoning": "Your detailed analysis of the markdown content, explaining how you identified milestones, issues, and their relationships. Explain your thought process for grouping content, creating issue titles, and suggesting labels.",
+  "reasoning": "Your detailed analysis explaining: 1) How you identified the main project theme for the milestone name, 2) How you categorized different content areas using labels, 3) How you broke down content into actionable issues with appropriate labels",
   "structure": {{
-    "Milestone Name 1": {{
-      "description": "Clear description of what this milestone achieves",
+    "[Project Number/ID] Main Project Title": {{
+      "description": "Comprehensive description of the entire project scope and objectives",
       "state": "open",
       "due_date": null,
       "issues": [
         {{
-          "title": "Concise, actionable issue title",
-          "body": "Detailed description of what needs to be done, including acceptance criteria when possible",
-          "labels": ["label1", "label2"],
+          "title": "[Area] Specific actionable task title",
+          "body": "Detailed description with context, acceptance criteria, and any technical details",
+          "labels": ["testing-qa", "high-priority"],
           "assignees": []
-        }}
-      ]
-    }},
-    "Milestone Name 2": {{
-      "description": "Another milestone description",
-      "state": "open", 
-      "due_date": null,
-      "issues": [
+        }},
         {{
-          "title": "Another issue title",
-          "body": "Issue description with context",
-          "labels": ["enhancement", "documentation"],
+          "title": "[Database] Another specific task",
+          "body": "Clear description of what needs to be done",
+          "labels": ["database-migration", "tech-stack"],
           "assignees": []
         }}
       ]
@@ -85,21 +90,20 @@ The structure should follow this exact format:
   }}
 }}
 
-GUIDELINES:
-- Create meaningful milestone names that represent major project phases or goals
-- Break down content into actionable, specific issues (not too broad, not too granular)
-- Use descriptive issue titles that clearly state what needs to be done
-- Include relevant context in issue bodies
-- Suggest appropriate labels like: bug, enhancement, documentation, feature, setup, testing, etc.
-- Only include assignees if they are explicitly mentioned in the markdown
-- Ensure issues are properly distributed across milestones
-- If the content is a simple list, consider whether items should be separate issues or combined
-- Look for natural groupings and dependencies in the content
+🎯 CRITICAL GUIDELINES:
+- Create ONLY ONE milestone that encompasses the entire project
+- Use labels to categorize different work streams (testing, database, etc.)
+- Prefix issue titles with area indicators like [Testing], [Database], [Code Quality]
+- Break content into specific, actionable issues
+- Use multiple labels per issue when appropriate (e.g., both "database-migration" and "tech-stack")
+- Include priority indicators in labels when evident (high-priority, low-priority)
+- Group related tasks into comprehensive issues rather than micro-tasks
+- Make milestone description cover the entire project scope
 
 MARKDOWN CONTENT TO ANALYZE:
 {markdown_content}
 
-Analyze this content and provide your response in the exact JSON format specified above."""
+Analyze this content and create ONE well-organized milestone with properly labeled issues in the exact JSON format above."""
 
 def call_deepseek_api(
     prompt: str,

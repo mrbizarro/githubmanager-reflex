@@ -3,47 +3,74 @@ Modern header component with settings drawer
 """
 
 import streamlit as st
+import requests
+import os
 from config.settings import Config
 
 def render_project_selector():
     """Render project selector dropdown"""
     
-    try:
-        # Get user's repositories
-        repos = get_user_repositories()
-        
-        if repos:
-            current_repo = f"{Config.get_repo_owner()}/{Config.get_repo_name()}"
+    # Always show current repository from .env first
+    current_repo = f"{Config.get_repo_owner()}/{Config.get_repo_name()}"
+    
+    if not current_repo or current_repo == "/":
+        st.info("⚠️ Please configure GitHub repository in settings")
+        return
+    
+    # Show current repository
+    st.text_input(
+        "Current Repository", 
+        value=current_repo,
+        disabled=True,
+        help="Configure repository in settings below"
+    )
+    
+    # Optional: Add a "Refresh Repositories" button for power users
+    if st.button("🔄 Switch Repository", key="switch_repo_btn", help="Load available repositories"):
+        st.session_state.show_repo_list = True
+    
+    # Only show full list if explicitly requested
+    if st.session_state.get('show_repo_list', False):
+        try:
+            with st.spinner("Loading your repositories..."):
+                repos = get_user_repositories()
             
-            # Create options list
-            repo_options = [f"{repo['owner']}/{repo['name']}" for repo in repos]
-            
-            # Find current selection
-            current_index = 0
-            if current_repo in repo_options:
-                current_index = repo_options.index(current_repo)
-            
-            selected_repo = st.selectbox(
-                "Select Repository",
-                options=repo_options,
-                index=current_index,
-                key="project_selector_header",
-                help="Switch between your repositories"
-            )
-            
-            # Update config if changed
-            if selected_repo != current_repo:
-                owner, name = selected_repo.split('/')
-                update_project_config(owner, name)
+            if repos:
+                repo_options = [f"{repo['owner']}/{repo['name']}" for repo in repos]
+                
+                selected_repo = st.selectbox(
+                    "Available Repositories",
+                    options=repo_options,
+                    key="repo_selector",
+                    help="Select a different repository"
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Switch", type="primary"):
+                        owner, name = selected_repo.split('/')
+                        update_project_config(owner, name)
+                        st.session_state.show_repo_list = False
+                        st.rerun()
+                
+                with col2:
+                    if st.button("❌ Cancel"):
+                        st.session_state.show_repo_list = False
+                        st.rerun()
+            else:
+                st.warning("No repositories found or API error")
+                if st.button("❌ Close"):
+                    st.session_state.show_repo_list = False
+                    st.rerun()
+                    
+        except Exception as e:
+            st.error(f"Error loading repositories: {e}")
+            if st.button("❌ Close"):
+                st.session_state.show_repo_list = False
                 st.rerun()
-        else:
-            st.info("Loading repositories...")
-            
-    except Exception as e:
-        st.error(f"Error loading repositories: {e}")
 
 def get_user_repositories():
-    """Get user's GitHub repositories"""
+    """Get user's GitHub repositories (with timeout)"""
     
     try:
         import requests
@@ -57,11 +84,11 @@ def get_user_repositories():
             "Accept": "application/vnd.github.v3+json"
         }
         
-        # Get user's repos (both owned and member)
+        # Get user's repos (both owned and member) with shorter timeout
         response = requests.get(
-            "https://api.github.com/user/repos?sort=updated&per_page=50", 
+            "https://api.github.com/user/repos?sort=updated&per_page=30", 
             headers=headers,
-            timeout=10
+            timeout=5  # Reduced timeout
         )
         
         if response.status_code == 200:
@@ -79,35 +106,88 @@ def get_user_repositories():
         else:
             return []
             
-    except Exception:
+    except requests.exceptions.Timeout:
+        st.warning("⏰ Repository loading timed out - using current configuration")
+        return []
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Could not load repositories: {str(e)}")
+        return []
+    except Exception as e:
+        st.warning(f"Unexpected error: {str(e)}")
         return []
 
 def update_project_config(owner, name):
-    """Update project configuration in .env"""
+    """Update project configuration in .env file"""
     
     try:
-        # Read current .env
-        with open('.env', 'r') as f:
-            lines = f.readlines()
+        print(f"🔄 Attempting to update repository to {owner}/{name}")
         
-        # Update repo owner and name
+        # Read current .env content
+        env_content = ""
+        if os.path.exists('.env'):
+            with open('.env', 'r') as f:
+                env_content = f.read()
+                print(f"📄 Current .env content length: {len(env_content)}")
+        
+        # Update or add repository settings
+        lines = env_content.split('\n') if env_content else []
         updated_lines = []
+        found_owner = False
+        found_name = False
+        
         for line in lines:
             if line.startswith('REPO_OWNER='):
-                updated_lines.append(f'REPO_OWNER={owner}\n')
+                old_value = line
+                updated_lines.append(f'REPO_OWNER={owner}')
+                found_owner = True
+                print(f"📝 Updated: {old_value} → REPO_OWNER={owner}")
             elif line.startswith('REPO_NAME='):
-                updated_lines.append(f'REPO_NAME={name}\n')
+                old_value = line
+                updated_lines.append(f'REPO_NAME={name}')
+                found_name = True
+                print(f"📝 Updated: {old_value} → REPO_NAME={name}")
             else:
                 updated_lines.append(line)
         
-        # Write back to .env
-        with open('.env', 'w') as f:
-            f.writelines(updated_lines)
+        # Add missing settings if not found
+        if not found_owner:
+            updated_lines.append(f'REPO_OWNER={owner}')
+            print(f"➕ Added: REPO_OWNER={owner}")
+        if not found_name:
+            updated_lines.append(f'REPO_NAME={name}')
+            print(f"➕ Added: REPO_NAME={name}")
         
-        st.success(f"✅ Switched to {owner}/{name}")
+        # Write back to .env
+        new_content = '\n'.join(updated_lines)
+        with open('.env', 'w') as f:
+            f.write(new_content)
+        
+        print(f"💾 Wrote .env file with {len(new_content)} characters")
+        
+        # Force environment reload
+        os.environ['REPO_OWNER'] = owner
+        os.environ['REPO_NAME'] = name
+        print(f"🔄 Updated environment variables: REPO_OWNER={owner}, REPO_NAME={name}")
+        
+        # Clear any session caching
+        if 'project_config_cache' in st.session_state:
+            del st.session_state.project_config_cache
+        
+        # Verify the update worked
+        with open('.env', 'r') as f:
+            verify_content = f.read()
+            if f'REPO_OWNER={owner}' in verify_content and f'REPO_NAME={name}' in verify_content:
+                print(f"✅ Verification passed: Repository updated to {owner}/{name}")
+            else:
+                print(f"❌ Verification failed: Content doesn't match expected values")
+                print(f"Expected: REPO_OWNER={owner}, REPO_NAME={name}")
+                print(f"Content: {verify_content}")
         
     except Exception as e:
-        st.error(f"Error updating config: {e}")
+        st.error(f"Error updating repository config: {e}")
+        print(f"❌ Error updating config: {e}")
+        import traceback
+        print(traceback.format_exc())
 
 def render_header():
     """Render modern header with gradient background"""
@@ -158,7 +238,80 @@ def render_settings_drawer():
             # Project selector (if GitHub is configured)
             if Config.get_github_token():
                 st.markdown("#### Project")
-                render_project_selector()
+                
+                # Show current configuration clearly
+                current_owner = Config.get_repo_owner()
+                current_name = Config.get_repo_name()
+                
+                if current_owner and current_name:
+                    st.success(f"✅ Current: {current_owner}/{current_name}")
+                    
+                    # Debug info
+                    with st.expander("🔍 Debug Info", expanded=False):
+                        st.code(f"REPO_OWNER={current_owner}\nREPO_NAME={current_name}")
+                        if st.button("🔄 Reload Config", key="reload_config"):
+                            from config.settings import load_environment
+                            load_environment()
+                            st.rerun()
+                        
+                        if st.button("🔍 Test Repository List", key="test_repos"):
+                            st.session_state.show_debug_repos = True
+                        
+                        if st.session_state.get('show_debug_repos', False):
+                            with st.spinner("Loading all repositories..."):
+                                repos = get_user_repositories()
+                            if repos:
+                                st.write(f"Found {len(repos)} repositories:")
+                                for repo in repos[:10]:  # Show first 10
+                                    st.write(f"- {repo['owner']}/{repo['name']}")
+                                if len(repos) > 10:
+                                    st.write(f"... and {len(repos) - 10} more")
+                            else:
+                                st.write("No repositories found")
+                            
+                            if st.button("❌ Close Debug", key="close_debug_repos"):
+                                st.session_state.show_debug_repos = False
+                                st.rerun()
+                    
+                    # Option to switch repositories
+                    if st.button("🔄 Switch Repository", key="settings_switch_repo"):
+                        st.session_state.show_repo_selector = True
+                    
+                    if st.session_state.get('show_repo_selector', False):
+                        with st.spinner("Loading repositories..."):
+                            repos = get_user_repositories()
+                        
+                        if repos:
+                            repo_options = [f"{repo['owner']}/{repo['name']}" for repo in repos]
+                            
+                            selected = st.selectbox(
+                                "Choose Repository",
+                                options=repo_options,
+                                key="settings_repo_select"
+                            )
+                            
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                if st.button("✅ Select", key="confirm_repo_change"):
+                                    owner, name = selected.split('/')
+                                    # Update .env file immediately
+                                    update_project_config(owner, name)
+                                    st.session_state.show_repo_selector = False
+                                    st.success(f"✅ Switched to {owner}/{name}")
+                                    st.rerun()
+                            
+                            with col_b:
+                                if st.button("❌ Cancel", key="cancel_repo_change"):
+                                    st.session_state.show_repo_selector = False
+                                    st.rerun()
+                        else:
+                            st.warning("Could not load repositories")
+                            if st.button("❌ Close", key="close_repo_loader"):
+                                st.session_state.show_repo_selector = False
+                                st.rerun()
+                else:
+                    st.warning("⚠️ Repository not configured")
+                
                 st.markdown("---")
             
             st.markdown("#### GitHub Configuration")
@@ -170,17 +323,9 @@ def render_settings_drawer():
                 help="Personal access token with repo scope"
             )
             
-            repo_owner = st.text_input(
-                "Repository Owner",
-                value=Config.get_repo_owner(),
-                help="GitHub username or organization"
-            )
-            
-            repo_name = st.text_input(
-                "Repository Name",
-                value=Config.get_repo_name(),
-                help="Name of the repository"
-            )
+            # Remove manual repository input - use dynamic selection only
+            if not Config.get_github_token():
+                st.info("ℹ️ Add your GitHub token above, then save to enable repository selection")
         
         with col2:
             st.markdown("#### AI Configuration")
@@ -205,20 +350,26 @@ def render_settings_drawer():
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             if st.button("💾 Save Settings", type="primary", use_container_width=True):
-                save_settings_to_env(github_token, repo_owner, repo_name, deepseek_key, theme)
+                save_settings_to_env(github_token, deepseek_key, theme)
                 st.session_state.show_settings = False
                 st.rerun()
 
-def save_settings_to_env(github_token, repo_owner, repo_name, deepseek_key, theme):
-    """Save settings to .env file"""
+def save_settings_to_env(github_token, deepseek_key, theme):
+    """Save settings to .env file (keeping current repository config)"""
     
     try:
+        # Keep current repository settings
+        current_owner = Config.get_repo_owner()
+        current_name = Config.get_repo_name()
+        
+        print(f"💾 Saving settings with repository: {current_owner}/{current_name}")
+        
         env_content = f"""# GitHub Issues Manager v6 Configuration
 
 # GitHub Settings
 GITHUB_TOKEN={github_token}
-REPO_OWNER={repo_owner}
-REPO_NAME={repo_name}
+REPO_OWNER={current_owner}
+REPO_NAME={current_name}
 
 # DeepSeek AI Settings (Optional)
 DEEPSEEK_API_KEY={deepseek_key}
@@ -231,10 +382,17 @@ THEME={theme}
         with open('.env', 'w') as f:
             f.write(env_content)
         
+        print(f"📝 Saved .env with REPO_OWNER={current_owner}, REPO_NAME={current_name}")
+        
+        # Clear repository selector session state
+        if 'show_repo_selector' in st.session_state:
+            del st.session_state.show_repo_selector
+        
         st.success("✅ Settings saved successfully!")
         
     except Exception as e:
         st.error(f"❌ Error saving settings: {e}")
+        print(f"❌ Save error: {e}")
 
 def render_help_drawer():
     """Render help and documentation drawer"""

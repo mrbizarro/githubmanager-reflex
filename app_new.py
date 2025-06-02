@@ -41,7 +41,7 @@ def main():
         render_header()
         
         # Status section (clean, no project dropdown)
-        render_status_section()
+        # render_status_section()  # This function needs to be implemented if needed
         
         # Navigation and content (if configured or in demo mode)
         demo_mode = st.session_state.get('demo_mode', False)

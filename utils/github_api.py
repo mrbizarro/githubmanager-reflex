@@ -293,6 +293,117 @@ class GitHubAPI:
         except requests.exceptions.RequestException as e:
             raise GitHubAPIError(f"Network error deleting label: {str(e)}")
     
+    def setup_standard_labels(self, progress_callback=None) -> Dict[str, Any]:
+        """Set up the standard organized project labels"""
+        
+        # Define our standard labels with emojis, colors, and descriptions
+        standard_labels = [
+            {
+                'name': '🧪 testing-qa',
+                'color': '7B68EE',  # Medium slate blue
+                'description': 'Testing & Quality Assurance tasks'
+            },
+            {
+                'name': '🗄️ database-migration',
+                'color': '2E8B57',  # Sea green
+                'description': 'Database & Migration Strategy'
+            },
+            {
+                'name': '⚡ code-quality',
+                'color': 'FFD700',  # Gold
+                'description': 'Code Quality & Optimization'
+            },
+            {
+                'name': '🔍 feature-analysis',
+                'color': '4169E1',  # Royal blue
+                'description': 'Core Feature Analysis'
+            },
+            {
+                'name': '🛠️ tech-stack',
+                'color': '808080',  # Gray
+                'description': 'Technology Stack Assessment'
+            },
+            {
+                'name': '📚 documentation',
+                'color': '32CD32',  # Lime green
+                'description': 'Documentation & Guides'
+            },
+            {
+                'name': '🐛 bug',
+                'color': 'DC143C',  # Crimson
+                'description': 'Bug fixes and issues'
+            },
+            {
+                'name': '✨ enhancement',
+                'color': '9370DB',  # Medium purple
+                'description': 'New features and improvements'
+            },
+            {
+                'name': '🚀 deployment',
+                'color': 'FF6347',  # Tomato
+                'description': 'Deployment and DevOps'
+            },
+            {
+                'name': '🔒 security',
+                'color': '8B0000',  # Dark red
+                'description': 'Security-related tasks'
+            },
+            {
+                'name': 'high-priority',
+                'color': 'FF0000',  # Red
+                'description': 'High priority tasks'
+            },
+            {
+                'name': 'medium-priority',
+                'color': 'FFA500',  # Orange
+                'description': 'Medium priority tasks'
+            },
+            {
+                'name': 'low-priority',
+                'color': '90EE90',  # Light green
+                'description': 'Low priority tasks'
+            }
+        ]
+        
+        results = {
+            'created': 0,
+            'skipped': 0,
+            'errors': []
+        }
+        
+        # Get existing labels
+        try:
+            existing_labels = self.get_labels()
+            existing_names = {label['name'] for label in existing_labels}
+        except GitHubAPIError as e:
+            results['errors'].append(f"Failed to get existing labels: {str(e)}")
+            return results
+        
+        # Create each standard label if it doesn't exist
+        for i, label_config in enumerate(standard_labels, 1):
+            if progress_callback:
+                progress_callback(f"Setting up label {i}/{len(standard_labels)}: {label_config['name']}")
+            
+            label_name = label_config['name']
+            
+            if label_name in existing_names:
+                results['skipped'] += 1
+                continue
+            
+            try:
+                self.create_label(
+                    name=label_name,
+                    color=label_config['color'],
+                    description=label_config['description']
+                )
+                results['created'] += 1
+                time.sleep(0.1)  # Rate limiting
+                
+            except GitHubAPIError as e:
+                results['errors'].append(f"Failed to create label '{label_name}': {str(e)}")
+        
+        return results
+    
     def search_issues(self, query: str, per_page: int = 100) -> List[Dict[str, Any]]:
         """Search issues using GitHub search API"""
         
@@ -361,11 +472,11 @@ class GitHubAPI:
                 current_step += 1
                 
                 if progress_callback:
-                    progress_callback(
-                        step=current_step,
-                        total=total_steps,
-                        action=f"Creating milestone: {milestone_name}"
-                    )
+                progress_callback(
+                step=current_step,
+                total=total_steps,
+                action=f"Creating milestone: {milestone_name}"
+                )
                 
                 try:
                     milestone_response = self.create_milestone(
@@ -441,6 +552,14 @@ def create_issue_simple(title: str, body: str = "", milestone: int = None, label
         return api.create_issue(title, body, milestone, labels)
     except GitHubAPIError as e:
         raise e
+
+def setup_project_labels(progress_callback=None) -> Dict[str, Any]:
+    """Set up standard labels for organized project management"""
+    try:
+        api = GitHubAPI()
+        return api.setup_standard_labels(progress_callback)
+    except GitHubAPIError as e:
+        return {'created': 0, 'skipped': 0, 'errors': [str(e)]}
 
 def get_repository_info() -> Dict[str, Any]:
     """Get basic repository information"""

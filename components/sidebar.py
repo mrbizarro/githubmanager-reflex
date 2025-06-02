@@ -108,6 +108,13 @@ def render_settings_tools():
         st.session_state.show_ai_config = True
         st.rerun()
     
+    # Label setup
+    config = check_basic_config()
+    if config['github_configured']:
+        if st.button("🏷️ Setup Labels", key="sidebar_setup_labels", use_container_width=True):
+            st.session_state.show_label_setup = True
+            st.rerun()
+    
     # Theme toggle
     current_theme = "Dark" if st.session_state.get('dark_mode', True) else "Light"
     if st.button(f"🎨 Theme: {current_theme}", key="sidebar_theme", use_container_width=True):
@@ -171,6 +178,10 @@ def handle_sidebar_actions():
     # AI configuration modal
     if st.session_state.get('show_ai_config'):
         render_ai_config_modal()
+    
+    # Label setup modal
+    if st.session_state.get('show_label_setup'):
+        render_label_setup_modal()
     
     # Setup guide modal
     if st.session_state.get('show_setup_guide'):
@@ -265,6 +276,74 @@ def render_setup_guide_modal():
     if st.button("✅ Close", key="close_setup_guide"):
         st.session_state.show_setup_guide = False
         st.rerun()
+
+def render_label_setup_modal():
+    """Render label setup modal"""
+    
+    st.markdown("### 🏷️ Setup Project Labels")
+    
+    st.markdown("""
+    This will create standardized labels in your repository for better project organization:
+    
+    **Work Stream Labels:**
+    - 🧪 testing-qa - Testing & Quality Assurance
+    - 🗄️ database-migration - Database & Migration Strategy  
+    - ⚡ code-quality - Code Quality & Optimization
+    - 🔍 feature-analysis - Core Feature Analysis
+    - 🛠️ tech-stack - Technology Stack Assessment
+    - 📚 documentation - Documentation & Guides
+    - 🐛 bug - Bug fixes and issues
+    - ✨ enhancement - New features and improvements
+    - 🚀 deployment - Deployment and DevOps
+    - 🔒 security - Security-related tasks
+    
+    **Priority Labels:**
+    - high-priority, medium-priority, low-priority
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🚀 Setup Labels", key="run_label_setup", type="primary", use_container_width=True):
+            setup_labels_process()
+    
+    with col2:
+        if st.button("❌ Cancel", key="cancel_label_setup", use_container_width=True):
+            st.session_state.show_label_setup = False
+            st.rerun()
+
+def setup_labels_process():
+    """Process label setup with progress feedback"""
+    
+    try:
+        from utils.github_api import setup_project_labels
+        
+        progress_placeholder = st.empty()
+        
+        def progress_callback(message):
+            progress_placeholder.info(f"⏳ {message}")
+        
+        # Setup labels
+        results = setup_project_labels(progress_callback)
+        
+        # Show results
+        if results['created'] > 0:
+            st.success(f"✅ Created {results['created']} new labels!")
+        
+        if results['skipped'] > 0:
+            st.info(f"ℹ️ Skipped {results['skipped']} existing labels")
+        
+        if results['errors']:
+            st.error(f"❌ Errors occurred:")
+            for error in results['errors']:
+                st.error(f"- {error}")
+        
+        if not results['errors']:
+            st.session_state.show_label_setup = False
+            st.rerun()
+    
+    except Exception as e:
+        st.error(f"❌ Failed to setup labels: {str(e)}")
 
 def render_troubleshoot_modal():
     """Render troubleshooting modal"""

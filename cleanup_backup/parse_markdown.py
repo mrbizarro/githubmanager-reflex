@@ -1,7 +1,15 @@
 import re
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
-from deepseek_api import ai_parse_markdown, DeepSeekError
+try:
+    from deepseek_api import ai_parse_markdown, DeepSeekError
+except ImportError:
+    # Handle case where deepseek_api is not available
+    def ai_parse_markdown(text):
+        raise Exception("DeepSeek API not available")
+    
+    class DeepSeekError(Exception):
+        pass
 
 ISSUE_RE = re.compile(r'^##\s+Issue:\s*(.+)$', re.I)
 MILESTONE_RE = re.compile(r'^#\s+Milestone:\s*(.+)$', re.I)
@@ -39,98 +47,165 @@ def parse_markdown(md_text: str, use_ai: bool = True) -> Tuple[Optional[str], Di
 def parse_markdown_regex(md_text: str) -> Dict[str, Dict[str, Any]]:
     """
     Parse a markdown file using traditional regex patterns.
+    Creates a single milestone with properly labeled issues for better organization.
     
     Expected markdown format:
-    # Milestone: Milestone Title
-    description: Milestone description
-    state: open|closed
-    due_date: YYYY-MM-DD
+    # Project: Project Title
+    description: Project description
     
-    ## Issue: Issue Title
+    ## Section: Section Name (becomes a label)
+    
+    ### Issue: Issue Title
     
     Issue body text here.
     
-    labels: label1, label2
+    labels: additional, labels
     assignees: user1, user2
     
     Args:
         md_text: String containing markdown content
         
     Returns:
-        Dictionary with milestone titles as keys and milestone data (description and issues) as values
+        Dictionary with single milestone containing properly labeled issues
     """
     if not md_text or not isinstance(md_text, str):
         return {}
         
     lines = md_text.splitlines()
-    milestones = {}
-    current_milestone = None
+    
+    # Extract project title from first heading or generate one
+    project_title = "Project Overview"
+    project_description = "Extracted from markdown content"
+    current_section = None
+    all_issues = []
     current_issue = None
+    
+    # Map section names to label names
+    section_to_label = {
+        'testing': 'testing-qa',
+        'quality': 'testing-qa', 
+        'database': 'database-migration',
+        'migration': 'database-migration',
+        'code': 'code-quality',
+        'optimization': 'code-quality',
+        'feature': 'feature-analysis',
+        'analysis': 'feature-analysis',
+        'tech': 'tech-stack',
+        'technology': 'tech-stack',
+        'stack': 'tech-stack',
+        'documentation': 'documentation',
+        'docs': 'documentation',
+        'deployment': 'deployment',
+        'deploy': 'deployment',
+        'security': 'security',
+        'bug': 'bug',
+        'enhancement': 'enhancement',
+        'improve': 'enhancement'
+    }
 
     def flush_issue():
-        """Helper function to add the current issue to the current milestone."""
+        """Helper function to add the current issue to the issues list."""
         nonlocal current_issue
-        if current_issue and current_milestone:
-            # Clean up the body text by removing extra newlines
+        if current_issue:
+            # Clean up the body text
             if current_issue['body']:
                 current_issue['body'] = current_issue['body'].strip()
-            milestones[current_milestone]['issues'].append(current_issue)
+            
+            # Add section label if we have a current section
+            if current_section:
+                section_label = None
+                # Try to match section name to a standard label
+                for keyword, label in section_to_label.items():
+                    if keyword.lower() in current_section.lower():
+                        section_label = label
+                        break
+                
+                if not section_label:
+                    # Create a custom label from section name
+                    section_label = current_section.lower().replace(' ', '-')
+                
+                if section_label not in current_issue['labels']:
+                    current_issue['labels'].insert(0, section_label)
+            
+            all_issues.append(current_issue)
         current_issue = None
 
     for line in lines + ['']:
-        m_mile = MILESTONE_RE.match(line)
-        m_issue = ISSUE_RE.match(line)
+        line = line.strip()
         
-        if m_mile:
+        # Check for project title (# Project: or just #)
+        if line.startswith('# '):
             flush_issue()
-            current_milestone = m_mile.group(1).strip()
-            milestones[current_milestone] = {
-                'description': '', 
-                'issues': [],
-                'state': 'open',  # Default state
-                'due_date': None  # Default due date
-            }
-            continue
-            
-        if m_issue:
-            flush_issue()
-            title = m_issue.group(1).strip()
-            if not title:
-                # Skip issues with empty titles
-                continue
-            current_issue = {'title': title, 'body': '', 'labels': [], 'assignees': []}
-            continue
-            
-        if current_issue:
-            if LABELS_RE.match(line):
-                labels = [l.strip() for l in LABELS_RE.match(line).group(1).split(',')]
-                current_issue['labels'] = [l for l in labels if l]  # Filter out empty labels
-            elif ASSIGNEES_RE.match(line):
-                assignees = [a.strip() for a in ASSIGNEES_RE.match(line).group(1).split(',')]
-                current_issue['assignees'] = [a for a in assignees if a]  # Filter out empty assignees
+            if line.startswith('# Project:'):
+                project_title = line[10:].strip()
+            elif line.startswith('# Milestone:'):
+                project_title = line[12:].strip()
             else:
-                if not line.strip().startswith('---'):
-                    current_issue['body'] += line + '\n'
-        elif current_milestone:
-            if DESC_RE.match(line):
-                milestones[current_milestone]['description'] = DESC_RE.match(line).group(1).strip()
-            elif STATE_RE.match(line):
-                state = STATE_RE.match(line).group(1).strip().lower()
-                # Validate state value
-                if state in ['open', 'closed']:
-                    milestones[current_milestone]['state'] = state
-            elif DUE_DATE_RE.match(line):
-                due_date = DUE_DATE_RE.match(line).group(1).strip()
-                # Validate date format (YYYY-MM-DD)
-                try:
-                    datetime.strptime(due_date, '%Y-%m-%d')
-                    milestones[current_milestone]['due_date'] = due_date
-                except ValueError:
-                    # Invalid date format, ignore
-                    pass
-
+                # Just use the heading as project title
+                project_title = line[1:].strip()
+            continue
+            
+        # Check for section headers (## Section: or ##)
+        if line.startswith('## '):
+            flush_issue()
+            if line.startswith('## Section:'):
+                current_section = line[11:].strip()
+            else:
+                current_section = line[2:].strip()
+            continue
+            
+        # Check for issue headers (### Issue: or ## Issue:)
+        issue_match = re.match(r'^#{2,3}\s+Issue:\s*(.+)$', line, re.I)
+        if issue_match:
+            flush_issue()
+            title = issue_match.group(1).strip()
+            if title:
+                # Add section prefix to issue title if we have a section
+                if current_section:
+                    title = f"[{current_section}] {title}"
+                current_issue = {'title': title, 'body': '', 'labels': [], 'assignees': []}
+            continue
+            
+        # Process content within issues
+        if current_issue:
+            if line.startswith('labels:'):
+                labels = [l.strip() for l in line[7:].split(',')]
+                current_issue['labels'].extend([l for l in labels if l])
+            elif line.startswith('assignees:'):
+                assignees = [a.strip() for a in line[10:].split(',')]
+                current_issue['assignees'] = [a for a in assignees if a]
+            elif line.startswith('description:'):
+                project_description = line[12:].strip()
+            else:
+                if line and not line.startswith('---'):
+                    if current_issue['body']:
+                        current_issue['body'] += '\n'
+                    current_issue['body'] += line
+    
     flush_issue()
-    return milestones
+    
+    # If no issues were found, try to create some from the content
+    if not all_issues:
+        # Split content into basic issues
+        content_lines = [line for line in md_text.splitlines() if line.strip()]
+        if content_lines:
+            # Create a single issue from the content
+            all_issues.append({
+                'title': 'Process markdown content',
+                'body': '\n'.join(content_lines),
+                'labels': ['documentation'],
+                'assignees': []
+            })
+    
+    # Return single milestone structure
+    return {
+        project_title: {
+            'description': project_description,
+            'state': 'open',
+            'due_date': None,
+            'issues': all_issues
+        }
+    }
 
 def validate_milestone_data(milestone_data: Dict[str, Any]) -> List[str]:
     """
