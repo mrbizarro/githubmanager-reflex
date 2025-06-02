@@ -297,11 +297,19 @@ class GitHubAPI:
         except requests.exceptions.RequestException as e:
             raise GitHubAPIError(f"Network error deleting milestone: {str(e)}")
     
-    def get_labels(self) -> List[Dict[str, Any]]:
-        """Get repository labels"""
+    def get_labels(self, per_page: int = 100, page: int = 1) -> List[Dict[str, Any]]:
+        """Get repository labels with pagination support"""
+        
+        params = {
+            "per_page": min(per_page, 100),  # GitHub max is 100
+            "page": page
+        }
         
         try:
-            response = self.session.get(f"{self.base_url}/repos/{self.owner}/{self.repo}/labels")
+            response = self.session.get(
+                f"{self.base_url}/repos/{self.owner}/{self.repo}/labels",
+                params=params
+            )
             
             if response.status_code == 200:
                 return response.json()
@@ -310,6 +318,35 @@ class GitHubAPI:
                 
         except requests.exceptions.RequestException as e:
             raise GitHubAPIError(f"Network error getting labels: {str(e)}")
+    
+    def get_all_labels(self, progress_callback=None) -> List[Dict[str, Any]]:
+        """Get ALL repository labels with automatic pagination"""
+        
+        all_labels = []
+        page = 1
+        per_page = 100  # GitHub's max per page
+        
+        while True:
+            if progress_callback:
+                progress_callback(f"Loading labels page {page}...")
+            
+            page_labels = self.get_labels(per_page=per_page, page=page)
+            
+            if not page_labels:  # No more labels
+                break
+            
+            all_labels.extend(page_labels)
+            
+            # If we got fewer labels than per_page, we're done
+            if len(page_labels) < per_page:
+                break
+                
+            page += 1
+        
+        if progress_callback:
+            progress_callback(f"Loaded {len(all_labels)} labels total")
+        
+        return all_labels
     
     def create_label(self, name: str, color: str, description: str = "") -> Dict[str, Any]:
         """Create a new label"""

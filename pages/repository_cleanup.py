@@ -1,13 +1,28 @@
 """
 Repository Cleanup page - manage existing issues and milestones
+FIXED: Simplified label manager that actually works with GitHub API
 """
 
 import streamlit as st
 import json
 from datetime import datetime
+from urllib.parse import quote
 
 from config.settings import get_config
 from utils.session import get_session_state, set_session_state
+
+# STANDARD GITHUB LABELS - These will be preserved
+STANDARD_GITHUB_LABELS = {
+    'bug',
+    'documentation', 
+    'duplicate',
+    'enhancement',
+    'good first issue',
+    'help wanted',
+    'invalid',
+    'question',
+    'wontfix'
+}
 
 def render_cleanup_page():
     """Render the repository cleanup page"""
@@ -21,7 +36,10 @@ def render_cleanup_page():
             'filter_state': 'all',
             'sort_by': 'created',
             'sort_direction': 'desc',
-            'label_analysis': None
+            'label_analysis': None,
+            'all_labels': [],
+            'standard_labels': [],
+            'non_standard_labels': []
         }
     
     # Header
@@ -129,7 +147,7 @@ def render_cleanup_tabs():
         "📋 Issues",
         "🎯 Milestones", 
         "🔍 Search",
-        "🏷️ Labels"
+        "🏷️ Label Cleanup"
     ])
     
     with tab1:
@@ -303,9 +321,16 @@ def render_issues_list():
                     load_repository_issues()
 
 def render_milestones_tab():
-    """Render milestones management tab"""
+    """Render milestones management tab with bulk deletion"""
     
     st.markdown("### 🎯 Milestone Management")
+    
+    # Enhanced info about milestone deletion
+    render_alert(
+        type="info",
+        title="Milestone Deletion Features",
+        description="✅ Single milestone deletion  ✅ Bulk milestone deletion  ✅ Preview changes before deletion"
+    )
     
     # Load milestones button
     if st.button("🔄 Load Milestones", type="primary"):
@@ -317,41 +342,68 @@ def render_milestones_tab():
         return
     
     # Milestones list
-    milestones = st.session_state.cleanup_state['loaded_milestones']
+    milestones = st.session_state.cleanup_state.get('loaded_milestones', [])
     
-    if milestones:
+    if milestones and len(milestones) > 0:
         render_alert(
             type="success",
             title=f"Found {len(milestones)} milestones",
-            description="Loaded from repository"
+            description="Select milestones below for bulk deletion or individual management"
         )
         
-        render_milestones_list(milestones)
+        render_milestones_list_with_bulk_selection(milestones)
     else:
         st.info("No milestones loaded. Click 'Load Milestones' to fetch from repository.")
 
-def render_milestones_list(milestones):
-    """Render list of milestones with management options"""
+def render_milestones_list_with_bulk_selection(milestones):
+    """Render list of milestones with bulk selection and management options"""
     
-    st.markdown("#### Manage Milestones")
+    st.markdown("#### Select Milestones to Delete")
     
-    for i, milestone in enumerate(milestones):
-        with st.container():
-            col1, col2 = st.columns([3, 1])
+    # Select all checkbox
+    select_all = st.checkbox("Select all milestones", key="select_all_milestones")
+    
+    # Milestones container
+    with st.container():
+        st.markdown('<div class="scroll-area">', unsafe_allow_html=True)
+        
+        selected_count = 0
+        total_affected_issues = 0
+        
+        for i, milestone in enumerate(milestones):
+            # Milestone checkbox and info
+            col1, col2, col3 = st.columns([0.1, 0.7, 0.2])
             
             with col1:
+                selected = st.checkbox(
+                    "",
+                    value=select_all,
+                    key=f"milestone_select_{i}",
+                    label_visibility="collapsed"
+                )
+                if selected:
+                    selected_count += 1
+                    total_affected_issues += milestone.get('open_issues', 0) + milestone.get('closed_issues', 0)
+            
+            with col2:
                 # Milestone info
-                st.markdown(f"**🎯 {milestone['title']}**")
+                state_emoji = "🟢" if milestone['state'] == 'open' else "🔴"
+                title = milestone['title'][:50] + "..." if len(milestone['title']) > 50 else milestone['title']
+                
+                st.markdown(f"**{state_emoji} 🎯 {title}**")
                 st.markdown(f"*{milestone['description'] or 'No description'}*")
+                st.markdown(f"*Created {milestone['created_at']}*")
                 
                 # Stats
                 open_issues = milestone.get('open_issues', 0)
                 closed_issues = milestone.get('closed_issues', 0)
+                total_issues = open_issues + closed_issues
                 
                 stats_html = f"""
-                <div style="display: flex; gap: 1rem; margin: 0.5rem 0;">
-                    <span class="modern-badge badge-success">{open_issues} open</span>
-                    <span class="modern-badge">{closed_issues} closed</span>
+                <div style="display: flex; gap: 0.5rem; margin: 0.25rem 0;">
+                    <span class="modern-badge badge-success" style="font-size: 0.75rem;">{open_issues} open</span>
+                    <span class="modern-badge" style="font-size: 0.75rem;">{closed_issues} closed</span>
+                    <span class="modern-badge badge-primary" style="font-size: 0.75rem;">#{milestone['number']}</span>
                 </div>
                 """
                 st.markdown(stats_html, unsafe_allow_html=True)
@@ -359,13 +411,26 @@ def render_milestones_list(milestones):
                 # Due date
                 if milestone.get('due_date'):
                     st.markdown(f"**Due:** {milestone['due_date']}")
+                
+                # Completion percentage
+                if total_issues > 0:
+                    completion = (closed_issues / total_issues) * 100
+                    progress_color = "#10b981" if completion >= 80 else "#f59e0b" if completion >= 50 else "#ef4444"
+                    st.markdown(f"""
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0;">
+                        <div style="width: 50px; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
+                            <div style="width: {completion}%; height: 100%; background: {progress_color};"></div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: #6b7280;">{completion:.0f}%</span>
+                    </div>
+                    """, unsafe_allow_html=True)
             
-            with col2:
+            with col3:
                 # Action buttons
-                if st.button("👁️ View", key=f"view_milestone_{i}"):
+                if st.button("👁️", key=f"view_milestone_{i}", help="View milestone details"):
                     st.session_state[f'show_milestone_{i}'] = not st.session_state.get(f'show_milestone_{i}', False)
                 
-                if st.button("🗑️ Delete", key=f"delete_milestone_{i}", type="secondary"):
+                if st.button("🗑️", key=f"delete_single_milestone_{i}", help="Delete this milestone", type="secondary"):
                     if st.session_state.get(f'confirm_delete_milestone_{i}', False):
                         delete_milestone(milestone)
                         st.success(f"Deleted milestone: {milestone['title']}")
@@ -375,18 +440,304 @@ def render_milestones_list(milestones):
                         st.warning("Click again to confirm deletion")
                         st.rerun()
             
-            # Milestone details
+            # Milestone details (expandable)
             if st.session_state.get(f'show_milestone_{i}', False):
                 with st.expander("Milestone Details", expanded=True):
                     st.markdown(f"**URL:** {milestone['url']}")
                     st.markdown(f"**State:** {milestone['state']}")
+                    st.markdown(f"**Number:** #{milestone['number']}")
                     st.markdown(f"**Created:** {milestone['created_at']}")
                     
                     if milestone.get('updated_at'):
                         st.markdown(f"**Updated:** {milestone['updated_at']}")
+                    
+                    if milestone.get('due_date'):
+                        st.markdown(f"**Due Date:** {milestone['due_date']}")
+                    
+                    # Issue stats details
+                    if total_issues > 0:
+                        completion = (closed_issues / total_issues) * 100
+                        st.markdown(f"**Completion:** {completion:.1f}% ({closed_issues}/{total_issues} issues)")
             
             if i < len(milestones) - 1:
                 st.markdown("---")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Bulk action buttons
+        if selected_count > 0:
+            st.markdown("---")
+            st.markdown(f"### 🎯 Bulk Actions: {selected_count} milestones selected")
+            
+            # Summary of impact
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Selected Milestones", selected_count)
+            
+            with col2:
+                st.metric("Affected Issues", total_affected_issues)
+            
+            with col3:
+                open_count = sum(1 for i, m in enumerate(milestones) 
+                               if (select_all or st.session_state.get(f'milestone_select_{i}', False)) 
+                               and m['state'] == 'open')
+                st.metric("Open Milestones", open_count)
+            
+            with col4:
+                closed_count = selected_count - open_count
+                st.metric("Closed Milestones", closed_count)
+            
+            # Warning about milestone deletion
+            if total_affected_issues > 0:
+                render_alert(
+                    type="warning",
+                    title="⚠️ Impact Warning",
+                    description=f"Deleting these milestones will remove milestone assignment from {total_affected_issues} issues. This action cannot be undone."
+                )
+            else:
+                render_alert(
+                    type="info",
+                    title="Safe Deletion",
+                    description="These milestones have no associated issues and can be safely deleted."
+                )
+            
+            col1, col2, col3 = st.columns([1, 2, 1])
+            
+            with col1:
+                if st.button("🧪 Preview Deletion", key="preview_delete_milestones"):
+                    preview_milestone_deletion(milestones, select_all, selected_count, total_affected_issues)
+            
+            with col2:
+                if st.button(
+                    f"🗑️ Delete {selected_count} Selected Milestones",
+                    type="primary",
+                    use_container_width=True,
+                    key="delete_selected_milestones"
+                ):
+                    if st.session_state.get('confirm_bulk_milestone_deletion', False):
+                        delete_selected_milestones(milestones, select_all)
+                    else:
+                        st.session_state['confirm_bulk_milestone_deletion'] = True
+                        st.error("⚠️ DANGER: This will permanently delete milestones! Click again to confirm.")
+                        st.rerun()
+            
+            with col3:
+                if st.button("🔄 Refresh", key="refresh_milestones"):
+                    st.session_state['confirm_bulk_milestone_deletion'] = False
+                    load_repository_milestones()
+        
+        # Show empty state if no milestones
+        elif len(milestones) == 0:
+            st.info("🎯 No milestones found in this repository.")
+
+def preview_milestone_deletion(milestones, select_all, selected_count, total_affected_issues):
+    """Preview milestone deletion with detailed impact analysis"""
+    
+    st.markdown("---")
+    st.markdown("### 🧪 Deletion Preview")
+    
+    render_alert(
+        type="info",
+        title=f"Preview: Would delete {selected_count} milestones",
+        description=f"This would affect {total_affected_issues} issues across your repository"
+    )
+    
+    # Show which milestones would be deleted
+    with st.expander("📋 Milestones to be deleted:", expanded=True):
+        for i, milestone in enumerate(milestones):
+            if select_all or st.session_state.get(f'milestone_select_{i}', False):
+                open_issues = milestone.get('open_issues', 0)
+                closed_issues = milestone.get('closed_issues', 0)
+                total_issues = open_issues + closed_issues
+                
+                state_indicator = "🟢 Open" if milestone['state'] == 'open' else "🔴 Closed"
+                
+                st.markdown(f"""
+                **🎯 {milestone['title']}** (#{milestone['number']}) - {state_indicator}
+                - Description: {milestone['description'] or 'No description'}
+                - Issues: {open_issues} open, {closed_issues} closed ({total_issues} total)
+                - Created: {milestone['created_at']}
+                """)
+        
+        # Summary of impact
+        if total_affected_issues > 0:
+            st.markdown("---")
+            st.markdown("### ⚠️ Impact Summary")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"""
+                **Issues that will lose milestone assignment:**
+                - {total_affected_issues} total issues
+                - These issues will remain open/closed but without milestone
+                """)
+            
+            with col2:
+                st.markdown(f"""
+                **Recommended actions before deletion:**
+                - Review affected issues
+                - Consider reassigning to other milestones
+                - Export milestone data if needed
+                """)
+        else:
+            st.success("✅ **Safe deletion**: No issues will be affected")
+
+def delete_selected_milestones(milestones, select_all):
+    """Delete selected milestones using GitHub API with progress tracking"""
+    
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Get selected milestone numbers
+        selected_milestones = []
+        if select_all:
+            selected_milestones = [(m['number'], m['title']) for m in milestones]
+        else:
+            for i in range(len(milestones)):
+                if st.session_state.get(f'milestone_select_{i}', False):
+                    selected_milestones.append((milestones[i]['number'], milestones[i]['title']))
+        
+        if not selected_milestones:
+            st.warning("⚠️ No milestones selected")
+            return
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Create progress placeholder and status tracking
+        progress_container = st.container()
+        
+        with progress_container:
+            # Progress bar
+            progress_bar = st.progress(0, text=f"Starting deletion of {len(selected_milestones)} milestones...")
+            
+            # Status metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                success_metric = st.metric("Successful", 0)
+            with col2:
+                failed_metric = st.metric("Failed", 0)
+            with col3:
+                remaining_metric = st.metric("Remaining", len(selected_milestones))
+        
+        # Delete milestones one by one with progress updates
+        successful = 0
+        failed = 0
+        errors = []
+        
+        for i, (milestone_number, milestone_title) in enumerate(selected_milestones):
+            # Update progress
+            progress = (i + 1) / len(selected_milestones)
+            progress_bar.progress(progress, text=f"Deleting milestone {i+1}/{len(selected_milestones)}: {milestone_title}")
+            
+            try:
+                success = api.delete_milestone(milestone_number)
+                
+                if success:
+                    successful += 1
+                    # Update success metric
+                    with col1:
+                        st.metric("Successful", successful)
+                else:
+                    failed += 1
+                    errors.append(f"Failed to delete milestone '{milestone_title}' (#{milestone_number})")
+                    with col2:
+                        st.metric("Failed", failed)
+                
+                # Update remaining count
+                remaining = len(selected_milestones) - (i + 1)
+                with col3:
+                    st.metric("Remaining", remaining)
+                
+                # Small delay to avoid rate limiting and allow UI updates
+                import time
+                time.sleep(0.5)
+                
+            except GitHubAPIError as e:
+                failed += 1
+                errors.append(f"API Error deleting '{milestone_title}': {str(e)}")
+                with col2:
+                    st.metric("Failed", failed)
+            
+            except Exception as e:
+                failed += 1
+                errors.append(f"Unexpected error deleting '{milestone_title}': {str(e)}")
+                with col2:
+                    st.metric("Failed", failed)
+        
+        # Final progress update
+        progress_bar.progress(1.0, text="Deletion completed!")
+        
+        # Show final results
+        st.markdown("---")
+        st.markdown("### 📊 Deletion Results")
+        
+        if successful > 0:
+            st.success(f"✅ Successfully deleted {successful} milestones")
+        
+        if failed > 0:
+            st.error(f"❌ Failed to delete {failed} milestones")
+            with st.expander("🔍 View error details", expanded=False):
+                for error in errors:
+                    st.text(f"• {error}")
+        
+        # Show completion summary
+        total_processed = successful + failed
+        if total_processed > 0:
+            success_rate = (successful / total_processed) * 100
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Processed", total_processed)
+            with col2:
+                st.metric("Success Rate", f"{success_rate:.1f}%")
+            with col3:
+                if errors:
+                    st.metric("Errors", len(errors))
+                else:
+                    st.metric("Errors", "0 🎉")
+        
+        # Reset confirmation state
+        st.session_state['confirm_bulk_milestone_deletion'] = False
+        
+        # Auto-refresh milestones list after a delay
+        import time
+        time.sleep(2)
+        load_repository_milestones()
+        
+    except Exception as e:
+        st.error(f"❌ Unexpected error during bulk deletion: {str(e)}")
+        st.session_state['confirm_bulk_milestone_deletion'] = False
+
+def delete_milestone(milestone):
+    """Delete single milestone using GitHub API"""
+    
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Delete milestone
+        success = api.delete_milestone(milestone['number'])
+        
+        if success:
+            st.success(f"✅ Successfully deleted milestone: {milestone['title']}")
+            # Remove from local state
+            milestones = st.session_state.cleanup_state['loaded_milestones']
+            st.session_state.cleanup_state['loaded_milestones'] = [m for m in milestones if m['number'] != milestone['number']]
+        else:
+            st.error(f"❌ Failed to delete milestone: {milestone['title']}")
+        
+    except GitHubAPIError as e:
+        st.error(f"❌ GitHub API Error: {str(e)}")
+        
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {str(e)}")
 
 def render_search_tab():
     """Render advanced search tab"""
@@ -476,195 +827,355 @@ def render_search_result_item(item, index):
             st.markdown("---")
 
 def render_labels_tab():
-    """Render labels management tab"""
+    """Render SIMPLIFIED labels management tab"""
     
-    st.markdown("### 🏷️ Label Cleanup & Management")
+    st.markdown("### 🏷️ Label Cleanup - Remove Non-Standard Labels")
     
-    # Modern label setup section
-    st.markdown("#### 🎨 Modern Label System Setup")
+    # Simple explanation
+    render_alert(
+        type="info",
+        title="Simple Label Cleanup",
+        description="This will remove ALL non-standard GitHub labels, keeping only the 9 standard ones. Perfect for preparing your repository for a clean modern label setup."
+    )
+    
+    # Standard labels info
+    with st.expander("📋 Standard GitHub Labels (These will be kept)", expanded=False):
+        standard_labels_list = ', '.join(sorted(STANDARD_GITHUB_LABELS))
+        st.markdown(f"**Standard Labels:** {standard_labels_list}")
+        st.markdown("""
+        These are the default labels that GitHub provides in new repositories. 
+        They are commonly used and will be preserved during cleanup.
+        """)
+    
+    # Main action button
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        if st.button("🔄 Load & Analyze Labels", type="primary", use_container_width=True):
+            load_and_analyze_labels()
+    
+    with col2:
+        if st.button("🎨 Setup Modern Labels After Cleanup", use_container_width=True, disabled=True):
+            st.info("Clean up non-standard labels first, then this will become available")
+    
+    # Show analysis results if available
+    if st.session_state.cleanup_state.get('label_analysis'):
+        render_simple_label_analysis()
+
+def load_and_analyze_labels():
+    """Load labels from GitHub API and analyze them"""
+    
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Create progress placeholder
+        progress_placeholder = st.empty()
+        
+        def progress_callback(message):
+            progress_placeholder.info(f"🔄 {message}")
+        
+        # Get ALL labels from repository with pagination
+        all_labels = api.get_all_labels(progress_callback=progress_callback)
+        
+        # Clear progress placeholder
+        progress_placeholder.empty()
+        
+        # Categorize labels
+        standard_labels = []
+        non_standard_labels = []
+        
+        for label in all_labels:
+            label_name = label['name'].lower()
+            if label_name in STANDARD_GITHUB_LABELS:
+                standard_labels.append(label)
+            else:
+                non_standard_labels.append(label)
+        
+        # Store in session state
+        st.session_state.cleanup_state['all_labels'] = all_labels
+        st.session_state.cleanup_state['standard_labels'] = standard_labels
+        st.session_state.cleanup_state['non_standard_labels'] = non_standard_labels
+        st.session_state.cleanup_state['label_analysis'] = {
+            'total_labels': len(all_labels),
+            'standard_count': len(standard_labels),
+            'non_standard_count': len(non_standard_labels)
+        }
+        
+        # Show success message with better info
+        if len(all_labels) > 100:
+            st.success(f"✅ Loaded all {len(all_labels)} labels from repository (fetched across multiple pages)")
+        else:
+            st.success(f"✅ Loaded {len(all_labels)} labels from repository")
+        st.rerun()
+        
+    except GitHubAPIError as e:
+        st.error(f"❌ GitHub API Error: {str(e)}")
+        
+    except Exception as e:
+        st.error(f"❌ Unexpected error loading labels: {str(e)}")
+
+def render_simple_label_analysis():
+    """Render simple label analysis with two categories"""
+    
+    analysis = st.session_state.cleanup_state['label_analysis']
+    standard_labels = st.session_state.cleanup_state['standard_labels']
+    non_standard_labels = st.session_state.cleanup_state['non_standard_labels']
+    
+    # Summary metrics
+    st.markdown("#### 📊 Label Analysis Results")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Total Labels", analysis['total_labels'])
+    
+    with col2:
+        st.metric("✅ Standard Labels", analysis['standard_count'])
+    
+    with col3:
+        st.metric("🗑️ Non-Standard Labels", analysis['non_standard_count'])
+    
+    # Show the two categories
+    st.markdown("---")
+    
+    # Standard labels (will be kept)
+    if standard_labels:
+        st.markdown("#### ✅ Standard Labels (These will be KEPT)")
+        
+        standard_html = ' '.join([
+            f'<span class="modern-badge badge-success" style="margin: 0.125rem;">{label["name"]}</span>'
+            for label in standard_labels
+        ])
+        st.markdown(standard_html, unsafe_allow_html=True)
+        
+        render_alert(
+            type="success",
+            title="Safe Labels",
+            description=f"These {len(standard_labels)} standard GitHub labels will be preserved."
+        )
+    
+    # Non-standard labels (will be deleted)
+    if non_standard_labels:
+        st.markdown("#### 🗑️ Non-Standard Labels (These will be DELETED)")
+        
+        # Show first 20 labels, with "show more" if needed
+        display_count = min(20, len(non_standard_labels))
+        displayed_labels = non_standard_labels[:display_count]
+        
+        non_standard_html = ' '.join([
+            f'<span class="modern-badge badge-destructive" style="margin: 0.125rem;">{label["name"]}</span>'
+            for label in displayed_labels
+        ])
+        st.markdown(non_standard_html, unsafe_allow_html=True)
+        
+        if len(non_standard_labels) > 20:
+            st.markdown(f"*... and {len(non_standard_labels) - 20} more labels*")
+        
+        # Warning and action buttons
+        render_alert(
+            type="warning",
+            title="⚠️ Deletion Warning",
+            description=f"This will permanently delete {len(non_standard_labels)} non-standard labels. This action cannot be undone!"
+        )
+        
+        # Action buttons
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.button("🧪 Preview Deletion", key="preview_label_cleanup"):
+                preview_label_cleanup()
+        
+        with col2:
+            if st.button(
+                f"🗑️ DELETE {len(non_standard_labels)} Non-Standard Labels",
+                type="primary",
+                use_container_width=True,
+                key="delete_non_standard_labels"
+            ):
+                if st.session_state.get('confirm_label_cleanup', False):
+                    delete_non_standard_labels()
+                else:
+                    st.session_state['confirm_label_cleanup'] = True
+                    st.error("⚠️ FINAL WARNING: This will permanently delete labels! Click again to confirm.")
+                    st.rerun()
+        
+        with col3:
+            if st.button("🔄 Refresh", key="refresh_label_analysis"):
+                st.session_state['confirm_label_cleanup'] = False
+                load_and_analyze_labels()
+    
+    else:
+        render_alert(
+            type="success",
+            title="🎉 Repository Already Clean!",
+            description="Your repository only has standard GitHub labels. Ready for modern label setup!"
+        )
+
+def preview_label_cleanup():
+    """Preview what the label cleanup will do"""
+    
+    non_standard_labels = st.session_state.cleanup_state['non_standard_labels']
+    
+    st.markdown("---")
+    st.markdown("### 🧪 Label Cleanup Preview")
     
     render_alert(
         type="info",
-        title="Automatic Label Setup",
-        description="Set up modern colored labels with priority system for better issue organization"
+        title=f"Would delete {len(non_standard_labels)} non-standard labels",
+        description="All labels that are not part of GitHub's standard 9 labels will be removed"
     )
     
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        if st.button("🎨 Setup Modern Labels", type="primary", use_container_width=True):
-            setup_modern_labels_ui()
-    
-    with col2:
-        if st.button("🔄 Preview Label System", use_container_width=True):
-            preview_modern_labels()
-    
-    # Show preview if requested
-    if st.session_state.get('show_label_preview', False):
-        render_label_preview()
-    
-    st.markdown("---")
-    
-    # Analyze labels section
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        if st.button("📊 Analyze Labels", type="primary", use_container_width=True):
-            analyze_repository_labels()
-    
-    with col2:
-        if st.button("🔄 Refresh Analysis", use_container_width=True):
-            st.session_state.cleanup_state['label_analysis'] = None
-            analyze_repository_labels()
-    
-    # Show analysis results
-    analysis = st.session_state.cleanup_state.get('label_analysis')
-    
-    if analysis:
-        render_label_analysis(analysis)
-    else:
-        render_label_analysis_placeholder()
-
-def render_label_analysis(analysis):
-    """Render label analysis results"""
-    
-    # Summary metrics
-    st.markdown("#### 📊 Label Analysis")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        render_metric_card("Total Labels", analysis['total_labels'], "🏷️")
-    
-    with col2:
-        render_metric_card("Project Labels", len(analysis['project_labels']), "🎯")
-    
-    with col3:
-        render_metric_card("Standard Labels", len(analysis['standard_labels']), "✅")
-    
-    with col4:
-        render_metric_card("Suggested Deletions", len(analysis['suggested_deletions']), "🗑️")
-    
-    # Label categories
-    if analysis['project_labels']:
-        st.markdown("#### 🎯 Project Labels (Keep these)")
-        render_label_list(analysis['project_labels'], "badge-primary")
-    
-    if analysis['standard_labels']:
-        st.markdown("#### ✅ Standard Labels (Keep these)")
-        render_label_list(analysis['standard_labels'], "badge-success")
-    
-    if analysis['suggested_deletions']:
-        st.markdown("#### 🗑️ Suggested for Deletion")
-        render_label_list(analysis['suggested_deletions'], "badge-destructive")
-        
-        # Quick delete option
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            if st.button("🧪 Preview Deletion", key="preview_label_deletion"):
-                st.info(f"Would delete {len(analysis['suggested_deletions'])} labels")
-        
-        with col2:
-            if st.button("🗑️ Delete Suggested Labels", key="delete_suggested_labels", type="secondary"):
-                if st.session_state.get('confirm_label_deletion', False):
-                    delete_suggested_labels(analysis['suggested_deletions'])
-                    st.success(f"Deleted {len(analysis['suggested_deletions'])} labels")
-                    st.session_state.cleanup_state['label_analysis'] = None
-                    st.rerun()
-                else:
-                    st.session_state['confirm_label_deletion'] = True
-                    st.warning("Click again to confirm deletion")
-                    st.rerun()
-    
-    # Custom label deletion
-    render_custom_label_deletion(analysis)
-
-def render_label_list(labels, badge_class):
-    """Render list of labels with badges"""
-    
-    if labels:
-        labels_html = ' '.join([
-            f'<span class="modern-badge {badge_class}" style="margin: 0.125rem;">{label}</span>'
-            for label in labels[:20]  # Show first 20
-        ])
-        
-        st.markdown(labels_html, unsafe_allow_html=True)
-        
-        if len(labels) > 20:
-            st.markdown(f"*... and {len(labels) - 20} more*")
-
-def render_custom_label_deletion(analysis):
-    """Render custom label deletion interface"""
-    
-    st.markdown("---")
-    st.markdown("#### 🎯 Custom Label Deletion")
-    
-    # Get all unique labels
-    all_labels = set()
-    for label_list in [
-        analysis.get('project_labels', []),
-        analysis.get('standard_labels', []),
-        analysis.get('duplicate_candidates', []),
-        analysis.get('long_labels', []),
-        analysis.get('suggested_deletions', [])
-    ]:
-        all_labels.update(label_list)
-    
-    all_labels = sorted(list(all_labels))
-    
-    if all_labels:
-        selected_labels = st.multiselect(
-            "Select labels to delete:",
-            options=all_labels,
-            help="⚠️ This action cannot be undone! Select carefully.",
-            key="custom_label_deletion"
-        )
-        
-        if selected_labels:
-            st.warning(f"You selected {len(selected_labels)} labels for deletion")
+    # Show all labels that would be deleted
+    with st.expander(f"📋 {len(non_standard_labels)} labels to be deleted:", expanded=True):
+        for label in non_standard_labels:
+            color = label.get('color', '000000')
+            description = label.get('description', 'No description')
             
-            col1, col2 = st.columns(2)
+            st.markdown(f"""
+            **🗑️ {label['name']}**
+            - Color: #{color}
+            - Description: {description}
+            """)
+    
+    st.markdown("### ✅ After Cleanup")
+    st.markdown("Your repository will have only the standard GitHub labels, making it ready for a clean modern label setup.")
+
+def delete_non_standard_labels():
+    """Delete all non-standard labels using GitHub API"""
+    
+    try:
+        # Import the GitHub API utility
+        from utils.github_api import GitHubAPI, GitHubAPIError
+        
+        non_standard_labels = st.session_state.cleanup_state['non_standard_labels']
+        
+        if not non_standard_labels:
+            st.warning("⚠️ No non-standard labels to delete")
+            return
+        
+        # Initialize API
+        api = GitHubAPI()
+        
+        # Create progress container
+        progress_container = st.container()
+        
+        with progress_container:
+            # Progress bar
+            progress_bar = st.progress(0, text=f"Starting deletion of {len(non_standard_labels)} labels...")
             
+            # Status metrics
+            col1, col2, col3 = st.columns(3)
             with col1:
-                if st.button("🧪 Preview Custom Deletion", key="preview_custom_deletion"):
-                    st.info(f"Would delete {len(selected_labels)} selected labels")
-            
+                success_metric = st.metric("Successful", 0)
             with col2:
-                if st.button("🗑️ DELETE SELECTED LABELS", key="delete_custom_labels", type="secondary"):
-                    if st.session_state.get('confirm_custom_deletion', False):
-                        delete_custom_labels(selected_labels)
-                        st.success(f"Deleted {len(selected_labels)} labels")
-                        st.session_state.cleanup_state['label_analysis'] = None
-                        st.rerun()
-                    else:
-                        st.session_state['confirm_custom_deletion'] = True
-                        st.warning("⚠️ Last chance! This cannot be undone. Click again to confirm.")
-                        st.rerun()
-
-def render_label_analysis_placeholder():
-    """Render placeholder when no analysis is available"""
-    
-    st.markdown("""
-    <div class="modern-card">
-        <div class="card-header">
-            <h3 class="card-title">📊 Repository Label Analysis</h3>
-            <p class="card-description">Analyze your repository labels to identify duplicates, unused labels, and cleanup opportunities</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    **What Label Analysis Does:**
-    
-    - 🎯 **Identifies Project Labels**: Auto-generated project-specific labels
-    - ✅ **Finds Standard Labels**: Common GitHub labels (bug, enhancement, etc.)
-    - 🔍 **Detects Duplicates**: Similar or redundant labels
-    - 📏 **Flags Long Labels**: Labels that might be too verbose
-    - 🗑️ **Suggests Deletions**: Old or unused labels safe to remove
-    
-    Click **"Analyze Labels"** to start the analysis.
-    """)
+                failed_metric = st.metric("Failed", 0)
+            with col3:
+                remaining_metric = st.metric("Remaining", len(non_standard_labels))
+        
+        # Delete labels one by one with progress updates
+        successful = 0
+        failed = 0
+        errors = []
+        
+        for i, label in enumerate(non_standard_labels):
+            label_name = label['name']
+            
+            # Update progress
+            progress = (i + 1) / len(non_standard_labels)
+            progress_bar.progress(progress, text=f"Deleting label {i+1}/{len(non_standard_labels)}: {label_name}")
+            
+            try:
+                # URL encode the label name for safety
+                encoded_name = quote(label_name)
+                success = api.delete_label(encoded_name)
+                
+                if success:
+                    successful += 1
+                    with col1:
+                        st.metric("Successful", successful)
+                else:
+                    failed += 1
+                    errors.append(f"Failed to delete label '{label_name}'")
+                    with col2:
+                        st.metric("Failed", failed)
+                
+                # Update remaining count
+                remaining = len(non_standard_labels) - (i + 1)
+                with col3:
+                    st.metric("Remaining", remaining)
+                
+                # Small delay to avoid rate limiting
+                import time
+                time.sleep(0.3)
+                
+            except GitHubAPIError as e:
+                failed += 1
+                errors.append(f"API Error deleting '{label_name}': {str(e)}")
+                with col2:
+                    st.metric("Failed", failed)
+            
+            except Exception as e:
+                failed += 1
+                errors.append(f"Unexpected error deleting '{label_name}': {str(e)}")
+                with col2:
+                    st.metric("Failed", failed)
+        
+        # Final progress update
+        progress_bar.progress(1.0, text="Label cleanup completed!")
+        
+        # Show final results
+        st.markdown("---")
+        st.markdown("### 🎉 Label Cleanup Results")
+        
+        if successful > 0:
+            st.success(f"✅ Successfully deleted {successful} non-standard labels")
+        
+        if failed > 0:
+            st.error(f"❌ Failed to delete {failed} labels")
+            with st.expander("🔍 View error details", expanded=False):
+                for error in errors:
+                    st.text(f"• {error}")
+        
+        # Show completion summary
+        total_processed = successful + failed
+        if total_processed > 0:
+            success_rate = (successful / total_processed) * 100
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Processed", total_processed)
+            with col2:
+                st.metric("Success Rate", f"{success_rate:.1f}%")
+            with col3:
+                if errors:
+                    st.metric("Errors", len(errors))
+                else:
+                    st.metric("Errors", "0 🎉")
+        
+        # Show next steps
+        if successful > 0:
+            render_alert(
+                type="success",
+                title="🎉 Repository Ready for Modern Labels!",
+                description="Your repository now has only standard GitHub labels. You can now set up the modern label system cleanly."
+            )
+        
+        # Reset states
+        st.session_state['confirm_label_cleanup'] = False
+        st.session_state.cleanup_state['label_analysis'] = None
+        
+        # Auto-refresh after a delay
+        import time
+        time.sleep(2)
+        load_and_analyze_labels()
+        
+    except Exception as e:
+        st.error(f"❌ Unexpected error during label cleanup: {str(e)}")
+        st.session_state['confirm_label_cleanup'] = False
 
 def render_alert(type, title, description):
     """Render alert component"""
@@ -706,7 +1217,7 @@ def render_metric_card(title, value, icon):
     </div>
     """, unsafe_allow_html=True)
 
-# Mock data functions (replace with real API calls)
+# API functions
 
 def load_repository_issues():
     """Load issues from repository using GitHub API with pagination"""
@@ -831,47 +1342,6 @@ def load_repository_milestones():
     
     st.rerun()
 
-def analyze_repository_labels():
-    """Analyze repository labels (mock implementation)"""
-    
-    # Mock analysis results
-    mock_analysis = {
-        'total_labels': 24,
-        'project_labels': [
-            'project-auth-system',
-            'project-ui-redesign', 
-            'project-api-v2',
-            'project-mobile-app'
-        ],
-        'standard_labels': [
-            'bug',
-            'enhancement',
-            'documentation',
-            'help wanted',
-            'good first issue',
-            'wontfix'
-        ],
-        'duplicate_candidates': [
-            'bugfix',
-            'docs',
-            'help-wanted'
-        ],
-        'long_labels': [
-            'needs-more-information-from-user',
-            'waiting-for-external-dependency'
-        ],
-        'suggested_deletions': [
-            'old-label-1',
-            'duplicate-tag',
-            'unused-label',
-            'deprecated-feature',
-            'legacy-system'
-        ]
-    }
-    
-    st.session_state.cleanup_state['label_analysis'] = mock_analysis
-    st.rerun()
-
 def perform_advanced_search(query):
     """Perform advanced search (mock implementation)"""
     
@@ -953,146 +1423,3 @@ def close_selected_issues(issues, select_all):
         
     except Exception as e:
         st.error(f"❌ Unexpected error: {str(e)}")
-
-def delete_milestone(milestone):
-    """Delete milestone using GitHub API"""
-    
-    try:
-        # Import the GitHub API utility
-        from utils.github_api import GitHubAPI, GitHubAPIError
-        
-        # Initialize API
-        api = GitHubAPI()
-        
-        # Delete milestone
-        success = api.delete_milestone(milestone['number'])
-        
-        if success:
-            st.success(f"✅ Successfully deleted milestone: {milestone['title']}")
-            # Remove from local state
-            milestones = st.session_state.cleanup_state['loaded_milestones']
-            st.session_state.cleanup_state['loaded_milestones'] = [m for m in milestones if m['number'] != milestone['number']]
-        else:
-            st.error(f"❌ Failed to delete milestone: {milestone['title']}")
-        
-    except GitHubAPIError as e:
-        st.error(f"❌ GitHub API Error: {str(e)}")
-        
-    except Exception as e:
-        st.error(f"❌ Unexpected error: {str(e)}")
-
-def setup_modern_labels_ui():
-    """Set up modern labels through UI"""
-    
-    try:
-        from github_api import setup_modern_labels
-        
-        # Show progress
-        with st.spinner('🎨 Setting up modern label system...'):
-            results = setup_modern_labels()
-        
-        # Show results
-        if results['errors']:
-            st.warning(f"⚠️ Label setup completed with {len(results['errors'])} errors")
-            with st.expander("View Errors", expanded=False):
-                for error in results['errors']:
-                    st.error(error)
-        else:
-            st.success(f"✅ Label setup successful!")
-        
-        # Show summary
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Created", results['created'])
-        
-        with col2:
-            st.metric("Updated", results['updated'])
-        
-        with col3:
-            st.metric("Total", results['total'])
-        
-        render_alert(
-            type="success",
-            title="Modern Labels Ready!",
-            description="Your repository now has a professional colored label system. Process new issues to see them in action."
-        )
-        
-    except Exception as e:
-        st.error(f"❌ Failed to setup labels: {str(e)}")
-        
-        # Show manual setup option
-        render_alert(
-            type="warning",
-            title="Manual Setup Available",
-            description="You can also run 'python fix_label_colors.py' in your project directory."
-        )
-
-def preview_modern_labels():
-    """Preview the modern label system"""
-    
-    st.session_state['show_label_preview'] = not st.session_state.get('show_label_preview', False)
-    st.rerun()
-
-def render_label_preview():
-    """Render preview of modern label system"""
-    
-    st.markdown("#### 👀 Modern Label System Preview")
-    
-    # Priority labels
-    st.markdown("**Priority Labels:**")
-    priority_html = """
-    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap;">
-        <span class="modern-badge" style="background-color: #B60205; color: white;">🚨 priority-critical</span>
-        <span class="modern-badge" style="background-color: #D93F0B; color: white;">⚡ priority-high</span>
-        <span class="modern-badge" style="background-color: #FBCA04; color: black;">📋 priority-medium</span>
-        <span class="modern-badge" style="background-color: #0E8A16; color: white;">📝 priority-low</span>
-    </div>
-    """
-    st.markdown(priority_html, unsafe_allow_html=True)
-    
-    # Area labels
-    st.markdown("**Area Labels:**")
-    area_html = """
-    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap;">
-        <span class="modern-badge" style="background-color: #FF7F0E; color: white;">backend</span>
-        <span class="modern-badge" style="background-color: #1F77B4; color: white;">frontend</span>
-        <span class="modern-badge" style="background-color: #2CA02C; color: white;">database</span>
-        <span class="modern-badge" style="background-color: #D73A4A; color: white;">security</span>
-        <span class="modern-badge" style="background-color: #6A1B9A; color: white;">privacy</span>
-        <span class="modern-badge" style="background-color: #E91E63; color: white;">user-experience</span>
-    </div>
-    """
-    st.markdown(area_html, unsafe_allow_html=True)
-    
-    # Type labels
-    st.markdown("**Type Labels:**")
-    type_html = """
-    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap;">
-        <span class="modern-badge" style="background-color: #A2EEEF; color: black;">enhancement</span>
-        <span class="modern-badge" style="background-color: #D73A4A; color: white;">bug</span>
-        <span class="modern-badge" style="background-color: #7057FF; color: white;">maintenance</span>
-        <span class="modern-badge" style="background-color: #0075CA; color: white;">documentation</span>
-    </div>
-    """
-    st.markdown(type_html, unsafe_allow_html=True)
-    
-    st.markdown("""
-    **Benefits:**
-    - 🎨 **Visual Priority** - Instantly see what needs attention
-    - 📊 **Better Organization** - Filter and sort by priority/area
-    - 👥 **Team Clarity** - Everyone knows what to work on first
-    - 💼 **Professional Appearance** - Looks organized and maintained
-    """)
-
-def delete_suggested_labels(labels):
-    """Delete suggested labels (mock implementation)"""
-    
-    # In real implementation, this would call GitHub API to delete labels
-    pass
-
-def delete_custom_labels(labels):
-    """Delete custom selected labels (mock implementation)"""
-    
-    # In real implementation, this would call GitHub API to delete labels
-    pass
