@@ -817,7 +817,7 @@ if mode == "📁 Upload & Convert":
                 <h4 class="message-title">🚀 Live Deployment</h4>
                 <p class="message-content">
                     Changes will be applied to your repository.<br>
-                    🏷️ All issues will be automatically tagged with descriptive project labels based on milestone names
+                    🏷️ All issues get smart project labels (e.g., <strong>project-auth-system</strong>) + automatic label creation with colors & descriptions
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -1041,15 +1041,12 @@ if mode == "📁 Upload & Convert":
                                     'message': f'Creating issue: {short_title}'
                                 })
                                 
-                                # Generate project tag from milestone name
-                                project_tag = milestone_name.lower().replace(' ', '-').replace('_', '-')
-                                project_tag = ''.join(c if c.isalnum() or c == '-' else '' for c in project_tag)
-                                project_tag = '-'.join(word for word in project_tag.split('-') if word)[:30]
-                                
-                                # Combine user labels with project tag
-                                all_labels = issue.get('labels', []).copy()
-                                if project_tag:
-                                    all_labels.append(project_tag)
+                                # Use enhanced label management
+                                from label_manager import label_manager
+                                final_labels, project_tag = label_manager.prepare_labels_for_issue(
+                                    issue.get('labels', []), 
+                                    milestone_name
+                                )
                                 
                                 # Use simple, working API call
                                 from github_api_simple import create_issue_simple
@@ -1057,7 +1054,7 @@ if mode == "📁 Upload & Convert":
                                     title=issue_title,
                                     body=issue.get('body', ''),
                                     milestone=milestone_num,
-                                    labels=all_labels
+                                    labels=final_labels
                                 )
                                 issue_num = issue_result.get('number', 'Unknown') if issue_result else 'Failed'
                                 time.sleep(1)
@@ -1370,6 +1367,129 @@ elif mode == "🗑️ Repository Cleanup":
             
             if st.button("🔍 Search"):
                 st.info(f"Searching for: {search_query}")
+        
+        with st.expander("🏷️ Label Cleanup & Management", expanded=False):
+            st.markdown("### Analyze Your Repository Labels")
+            
+            if st.button("📊 Analyze Labels", key="analyze_labels"):
+                try:
+                    from label_manager import label_manager
+                    with st.spinner("Analyzing labels..."):
+                        analysis = label_manager.analyze_existing_labels()
+                    
+                    # Display analysis results
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Total Labels", analysis['total_labels'])
+                        st.metric("Project Labels", len(analysis['project_labels']))
+                    
+                    with col2:
+                        st.metric("Standard Labels", len(analysis['standard_labels']))
+                        st.metric("Potential Duplicates", len(analysis['duplicate_candidates']))
+                    
+                    with col3:
+                        st.metric("Long Labels", len(analysis['long_labels']))
+                        st.metric("Suggested Deletions", len(analysis['suggested_deletions']))
+                    
+                    # Show detailed breakdown
+                    if analysis['project_labels']:
+                        st.markdown("**🎯 Project Labels (Keep these):**")
+                        st.info(", ".join(analysis['project_labels']))
+                    
+                    if analysis['standard_labels']:
+                        st.markdown("**✅ Standard Labels (Keep these):**")
+                        st.success(", ".join(analysis['standard_labels']))
+                    
+                    if analysis['suggested_deletions']:
+                        st.markdown("**🗑️ Suggested for Deletion (Old auto-generated labels):**")
+                        st.warning(", ".join(analysis['suggested_deletions']))
+                        
+                        # Quick delete option
+                        if st.button("🗑️ Delete Suggested Labels", key="delete_suggested"):
+                            with st.spinner("Deleting labels..."):
+                                results = label_manager.bulk_delete_labels(
+                                    analysis['suggested_deletions'], 
+                                    dry_run=False
+                                )
+                            
+                            if results['successful'] > 0:
+                                st.success(f"✅ Deleted {results['successful']} labels")
+                            if results['failed'] > 0:
+                                st.error(f"❌ Failed to delete {results['failed']} labels")
+                    
+                    if analysis['duplicate_candidates']:
+                        st.markdown("**⚠️ Potential Duplicates (Review manually):**")
+                        st.warning(", ".join(analysis['duplicate_candidates']))
+                    
+                    if analysis['long_labels']:
+                        st.markdown("**📏 Long Labels (Consider shortening):**")
+                        st.info(", ".join(analysis['long_labels']))
+                    
+                    # Store analysis in session state for custom deletion
+                    st.session_state.label_analysis = analysis
+                    
+                except Exception as e:
+                    st.error(f"Error analyzing labels: {str(e)}")
+            
+            # Custom label deletion
+            if 'label_analysis' in st.session_state:
+                st.markdown("---")
+                st.markdown("### Custom Label Deletion")
+                
+                # Get all labels for selection
+                all_labels = []
+                analysis = st.session_state.label_analysis
+                all_labels.extend(analysis.get('project_labels', []))
+                all_labels.extend(analysis.get('standard_labels', []))
+                all_labels.extend(analysis.get('duplicate_candidates', []))
+                all_labels.extend(analysis.get('long_labels', []))
+                all_labels.extend(analysis.get('suggested_deletions', []))
+                
+                # Remove duplicates while preserving order
+                unique_labels = []
+                seen = set()
+                for label in all_labels:
+                    if label not in seen:
+                        unique_labels.append(label)
+                        seen.add(label)
+                
+                if unique_labels:
+                    selected_labels = st.multiselect(
+                        "Select labels to delete:",
+                        options=unique_labels,
+                        help="⚠️ This action cannot be undone! Select carefully."
+                    )
+                    
+                    if selected_labels:
+                        st.warning(f"You selected {len(selected_labels)} labels for deletion")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("🧪 Preview Deletion (Dry Run)", key="preview_delete"):
+                                from label_manager import label_manager
+                                results = label_manager.bulk_delete_labels(selected_labels, dry_run=True)
+                                st.info(f"Would delete {results['successful']} labels")
+                        
+                        with col2:
+                            if st.button("🗑️ DELETE SELECTED LABELS", key="delete_selected", type="primary"):
+                                st.warning("⚠️ Last chance! This cannot be undone.")
+                                if st.button("✅ Confirm Deletion", key="confirm_delete"):
+                                    from label_manager import label_manager
+                                    with st.spinner("Deleting labels..."):
+                                        results = label_manager.bulk_delete_labels(selected_labels, dry_run=False)
+                                    
+                                    if results['successful'] > 0:
+                                        st.success(f"✅ Successfully deleted {results['successful']} labels")
+                                        # Clear cache to refresh analysis
+                                        label_manager._existing_labels_cache = None
+                                        if 'label_analysis' in st.session_state:
+                                            del st.session_state.label_analysis
+                                    
+                                    if results['failed'] > 0:
+                                        st.error(f"❌ Failed to delete {results['failed']} labels")
+                                        for error in results['errors']:
+                                            st.error(error)
     
     st.markdown('</div>', unsafe_allow_html=True)
 
