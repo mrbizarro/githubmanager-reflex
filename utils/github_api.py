@@ -653,6 +653,114 @@ def setup_project_labels(progress_callback=None) -> Dict[str, Any]:
     except GitHubAPIError as e:
         return {'created': 0, 'skipped': 0, 'errors': [str(e)]}
 
+def setup_modern_labels(progress_callback=None) -> Dict[str, Any]:
+    """Set up modern colored label system with emojis and proper colors"""
+    try:
+        api = GitHubAPI()
+        
+        # Modern label system with proper colors matching the ones in the root github_api.py
+        modern_labels = [
+            # Priority labels with emojis
+            ("🚨 priority-critical", "B60205", "Critical issues requiring immediate attention"),
+            ("⚡ priority-high", "D93F0B", "High priority issues"),
+            ("📋 priority-medium", "FBCA04", "Medium priority issues"),
+            ("📝 priority-low", "0E8A16", "Low priority issues"),
+            
+            # Work stream labels
+            ("🧪 testing-qa", "7B68EE", "Testing & Quality Assurance tasks"),
+            ("🗄️ database-migration", "2E8B57", "Database & Migration Strategy"),
+            ("⚡ code-quality", "FFD700", "Code Quality & Optimization"),
+            ("🔍 feature-analysis", "4169E1", "Core Feature Analysis"),
+            ("🛠️ tech-stack", "808080", "Technology Stack Assessment"),
+            ("📚 documentation", "32CD32", "Documentation & Guides"),
+            ("🐛 bug", "DC143C", "Bug fixes and issues"),
+            ("✨ enhancement", "9370DB", "New features and improvements"),
+            ("🚀 deployment", "FF6347", "Deployment and DevOps"),
+            ("🔒 security", "8B0000", "Security-related tasks"),
+            
+            # Area labels (based on common issue types)
+            ("backend", "FF7F0E", "Backend/API related"),
+            ("frontend", "1F77B4", "Frontend/UI related"), 
+            ("database", "2CA02C", "Database related"),
+            ("user-experience", "E91E63", "UX improvements"),
+            ("requirements", "795548", "Requirements"),
+            ("workflow", "607D8B", "Workflow improvements"),
+            
+            # Standard labels with better colors
+            ("good-first-issue", "7057FF", "Good for newcomers"),
+            ("help-wanted", "008672", "Extra attention is needed"),
+            ("wontfix", "FFFFFF", "This will not be worked on")
+        ]
+        
+        results = {
+            "created": 0,
+            "updated": 0, 
+            "skipped": 0,
+            "errors": [],
+            "total": len(modern_labels)
+        }
+        
+        if progress_callback:
+            progress_callback(f"Setting up {len(modern_labels)} modern labels...")
+        
+        for i, (name, color, description) in enumerate(modern_labels):
+            if progress_callback:
+                progress_callback(f"Processing label {i+1}/{len(modern_labels)}: {name}")
+            
+            try:
+                # Try to create or update the label
+                label_data = {
+                    "name": name,
+                    "color": color.lstrip('#'),
+                    "description": description
+                }
+                
+                response = api.session.post(
+                    f"{api.base_url}/repos/{api.owner}/{api.repo}/labels",
+                    json=label_data
+                )
+                
+                if response.status_code == 201:
+                    # Label created
+                    results["created"] += 1
+                elif response.status_code == 422:
+                    # Label might already exist, try to update it
+                    try:
+                        from urllib.parse import quote
+                        encoded_name = quote(name)
+                        update_response = api.session.patch(
+                            f"{api.base_url}/repos/{api.owner}/{api.repo}/labels/{encoded_name}",
+                            json=label_data
+                        )
+                        
+                        if update_response.status_code == 200:
+                            results["updated"] += 1
+                        else:
+                            results["skipped"] += 1
+                    except Exception:
+                        results["skipped"] += 1
+                else:
+                    results["errors"].append(f"Failed to create/update {name}: HTTP {response.status_code}")
+                
+                # Small delay to avoid rate limiting
+                import time
+                time.sleep(0.1)
+                
+            except Exception as e:
+                results["errors"].append(f"Error processing {name}: {str(e)}")
+        
+        if progress_callback:
+            progress_callback(f"Completed! Created: {results['created']}, Updated: {results['updated']}, Errors: {len(results['errors'])}")
+        
+        return results
+        
+    except GitHubAPIError as e:
+        return {'created': 0, 'updated': 0, 'skipped': 0, 'errors': [str(e)]}
+
+def setup_modern_labels_simple(progress_callback=None) -> Dict[str, Any]:
+    """Simple wrapper for modern labels setup"""
+    return setup_modern_labels(progress_callback)
+
 def get_repository_info() -> Dict[str, Any]:
     """Get basic repository information"""
     try:

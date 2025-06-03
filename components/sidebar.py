@@ -74,6 +74,11 @@ def render_quick_actions():
     if st.button("✍️ Manual Entry", key="sidebar_manual", use_container_width=True):
         st.session_state.current_page = "Manual Entry"
         st.rerun()
+    
+    # ALWAYS CLICKABLE label setup button - no conditions!
+    if st.button("🎨 Fix Repository Labels", key="sidebar_fix_labels", use_container_width=True, type="secondary"):
+        st.session_state.show_label_setup = True
+        st.rerun()
 
 def render_navigation_shortcuts():
     """Render navigation shortcuts"""
@@ -108,12 +113,10 @@ def render_settings_tools():
         st.session_state.show_ai_config = True
         st.rerun()
     
-    # Label setup
-    config = check_basic_config()
-    if config['github_configured']:
-        if st.button("🏷️ Setup Labels", key="sidebar_setup_labels", use_container_width=True):
-            st.session_state.show_label_setup = True
-            st.rerun()
+    # ALWAYS CLICKABLE label setup - no disabled states!
+    if st.button("🏷️ Setup Labels", key="sidebar_setup_labels", use_container_width=True):
+        st.session_state.show_label_setup = True
+        st.rerun()
     
     # Theme toggle
     current_theme = "Dark" if st.session_state.get('dark_mode', True) else "Light"
@@ -280,70 +283,147 @@ def render_setup_guide_modal():
 def render_label_setup_modal():
     """Render label setup modal"""
     
-    st.markdown("### 🏷️ Setup Project Labels")
+    st.markdown("### 🎨 Setup Modern Colored Labels")
+    
+    # Check GitHub configuration first
+    config = check_basic_config()
+    
+    if not config['github_configured']:
+        st.error("❌ GitHub configuration required!")
+        st.markdown("""
+        **Please configure GitHub first:**
+        
+        1. Create a `.env` file with:
+        ```
+        GITHUB_TOKEN=your_github_personal_access_token
+        REPO_OWNER=your_username_or_organization
+        REPO_NAME=your_repository_name
+        ```
+        
+        2. Restart the application
+        
+        3. Come back to setup labels
+        """)
+        
+        if st.button("✅ Close", key="close_label_setup_config"):
+            st.session_state.show_label_setup = False
+            st.rerun()
+        return
     
     st.markdown("""
-    This will create standardized labels in your repository for better project organization:
+    This will create/update modern colored labels in your repository for better project organization:
     
-    **Work Stream Labels:**
-    - 🧪 testing-qa - Testing & Quality Assurance
-    - 🗄️ database-migration - Database & Migration Strategy  
-    - ⚡ code-quality - Code Quality & Optimization
-    - 🔍 feature-analysis - Core Feature Analysis
-    - 🛠️ tech-stack - Technology Stack Assessment
-    - 📚 documentation - Documentation & Guides
-    - 🐛 bug - Bug fixes and issues
-    - ✨ enhancement - New features and improvements
-    - 🚀 deployment - Deployment and DevOps
-    - 🔒 security - Security-related tasks
+    **🎨 Modern Priority Labels:**
+    - 🚨 priority-critical (Red) - Critical issues requiring immediate attention
+    - ⚡ priority-high (Orange) - High priority issues
+    - 📋 priority-medium (Yellow) - Medium priority issues
+    - 📝 priority-low (Green) - Low priority issues
     
-    **Priority Labels:**
-    - high-priority, medium-priority, low-priority
+    **🛠️ Work Stream Labels:**
+    - 🧪 testing-qa (Medium Slate Blue) - Testing & Quality Assurance
+    - 🗄️ database-migration (Sea Green) - Database & Migration Strategy  
+    - ⚡ code-quality (Gold) - Code Quality & Optimization
+    - 🔍 feature-analysis (Royal Blue) - Core Feature Analysis
+    - 🛠️ tech-stack (Gray) - Technology Stack Assessment
+    - 📚 documentation (Lime Green) - Documentation & Guides
+    - 🐛 bug (Crimson) - Bug fixes and issues
+    - ✨ enhancement (Medium Purple) - New features and improvements
+    - 🚀 deployment (Tomato) - Deployment and DevOps
+    - 🔒 security (Dark Red) - Security-related tasks
+    
+    **📋 Area Labels:**
+    - backend, frontend, database, user-experience, requirements, workflow
+    
+    **🤝 Standard Labels:**
+    - good-first-issue, help-wanted, wontfix
+    
+    ⚠️ **Note**: This will CREATE new labels or UPDATE existing ones with proper colors!
     """)
     
-    col1, col2 = st.columns(2)
+    # Show current repository
+    st.info(f"🔗 Repository: `{config['repo_owner']}/{config['repo_name']}`")
+    
+    # Make buttons larger and more prominent
+    col1, col2 = st.columns([3, 1])
     
     with col1:
-        if st.button("🚀 Setup Labels", key="run_label_setup", type="primary", use_container_width=True):
+        if st.button("🚀 SETUP LABELS NOW!", key="run_label_setup", type="primary", use_container_width=True, help="Click to apply colored labels to your GitHub repository"):
             setup_labels_process()
     
     with col2:
-        if st.button("❌ Cancel", key="cancel_label_setup", use_container_width=True):
+        if st.button("❌ Close", key="cancel_label_setup", use_container_width=True):
             st.session_state.show_label_setup = False
             st.rerun()
 
 def setup_labels_process():
-    """Process label setup with progress feedback"""
+    """Process label setup with progress feedback - SIMPLIFIED VERSION"""
     
+    st.markdown("## 🚀 Setting up labels...")
+    
+    # Check config first
     try:
-        from utils.github_api import setup_project_labels
+        from config.settings import check_basic_config
+        config = check_basic_config()
         
+        if not config['github_configured']:
+            st.error("❌ Please configure GitHub in your .env file first!")
+            return
+        
+        st.info(f"🔗 Working on repository: {config['repo_owner']}/{config['repo_name']}")
+        
+    except Exception as e:
+        st.error(f"❌ Configuration error: {str(e)}")
+        return
+    
+    # Try to import and run the setup
+    try:
+        from utils.github_api import setup_modern_labels
+        
+        # Simple progress tracking
         progress_placeholder = st.empty()
         
         def progress_callback(message):
             progress_placeholder.info(f"⏳ {message}")
         
-        # Setup labels
-        results = setup_project_labels(progress_callback)
+        # Run the setup
+        with st.spinner("Setting up colored labels..."):
+            results = setup_modern_labels(progress_callback)
+        
+        # Clear progress
+        progress_placeholder.empty()
         
         # Show results
         if results['created'] > 0:
             st.success(f"✅ Created {results['created']} new labels!")
         
-        if results['skipped'] > 0:
+        if results.get('updated', 0) > 0:
+            st.info(f"🔄 Updated {results['updated']} existing labels with new colors!")
+        
+        if results.get('skipped', 0) > 0:
             st.info(f"ℹ️ Skipped {results['skipped']} existing labels")
         
-        if results['errors']:
-            st.error(f"❌ Errors occurred:")
+        if results.get('errors'):
+            st.error(f"❌ {len(results['errors'])} errors occurred:")
             for error in results['errors']:
-                st.error(f"- {error}")
+                st.text(f"• {error}")
         
-        if not results['errors']:
+        if not results.get('errors') and (results['created'] > 0 or results.get('updated', 0) > 0):
+            st.balloons()  # Celebrate success!
+            
+            # Show link to GitHub
+            github_url = f"https://github.com/{config['repo_owner']}/{config['repo_name']}/labels"
+            st.markdown(f"🔗 [View your colored labels on GitHub]({github_url})")
+            
+            # Close the modal
             st.session_state.show_label_setup = False
-            st.rerun()
     
+    except ImportError as e:
+        st.error(f"❌ Import error: {str(e)}")
+        st.error("The utils.github_api module may not be available.")
+        
     except Exception as e:
-        st.error(f"❌ Failed to setup labels: {str(e)}")
+        st.error(f"❌ Unexpected error: {str(e)}")
+        st.error("Please check your GitHub configuration and try again.")
 
 def render_troubleshoot_modal():
     """Render troubleshooting modal"""
